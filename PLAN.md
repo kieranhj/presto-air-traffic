@@ -222,13 +222,20 @@ Done (2026-10-30):
 - The `aircraft.json` parser (`src/feed.c`) is checked on the host (`tests/feed_test.c`) against
   the Pi's live file. It finds the same aircraft and positions as Python's reading of it.
 
+- On the board (flashed with `picotool load --ignore-partitions`, which also removed the BBC
+  dual-boot's partition table):
+  - **the panel shows the radar** in palette mode, at **47.4 frames a second** (the 200 MHz clock
+    gives a 12.5 MHz dot clock);
+  - **touch** works: taps step the range;
+  - **Wi-Fi** joins (RSSI about −45 dBm), and **`aircraft.json` is fetched every second**, about
+    6 KB in 10–20 ms, with no failures;
+  - the first bug: the palette was set before core 1 had started the panel, so every colour
+    was black. Core 0 now waits for the panel first.
+
 To do:
 
-- Flash it and check:
-  - the panel: the palette ramps along the bottom should be smooth red, green and blue;
-  - touch: a tap changes the range;
-  - Wi-Fi and the fetches: the USB status line.
-- Measure the frame rate and the current draw.
+- Measure the current draw with a USB meter.
+- Check the palette ramps along the bottom are smooth, and whether the once-a-second redraw tears.
 
 ## Open questions
 

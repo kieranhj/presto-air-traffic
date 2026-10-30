@@ -15,7 +15,8 @@
 // so call it from the core that will service them (core 1 here).
 void st7701_init(uint8_t *framebuffer, uint32_t *palette);
 
-// Sets a palette entry from 8-bit RGB; takes effect as the scan reaches it.
+// Sets a palette entry from 8-bit RGB; takes effect as the scan reaches it. Ignored before
+// st7701_init.
 void st7701_set_palette(uint8_t entry, uint8_t r, uint8_t g, uint8_t b);
 
 // Scans out `framebuffer` from the next frame on.

@@ -43,6 +43,7 @@ static int range_i = 2;
 
 static void core1_main(void) {
     st7701_init(framebuffer, palette);
+    multicore_fifo_push_blocking(0);    // the panel's up: core 0 can set the palette
     for (;;) __wfe();
 }
 
@@ -112,10 +113,11 @@ static void draw(uint8_t status, const touch_state_t *touch) {
 
 int main(void) {
     stdio_init_all();
-    set_palette();
     gfx_init(framebuffer);
     gfx_clear(C_BG);
     multicore_launch_core1(core1_main);
+    multicore_fifo_pop_blocking();
+    set_palette();
 
     ft6236_init();
     printf("presto-air-traffic P0\n");

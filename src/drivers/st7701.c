@@ -346,6 +346,7 @@ void st7701_init(uint8_t *fb, uint32_t *pal) {
 }
 
 void st7701_set_palette(uint8_t entry, uint8_t r, uint8_t g, uint8_t b) {
+    if (!palette) return;   // before st7701_init
     // RGB666 at the top of the word plus red's low bit; the PIO reverses the bits on the way out
     palette[entry] = (((uint32_t)r << 24) & 0xF8000000u) |
                      (((uint32_t)g << 19) & 0x07E00000u) |

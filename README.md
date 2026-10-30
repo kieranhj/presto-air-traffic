@@ -5,9 +5,8 @@ touchscreen, Wi-Fi) that shows local air traffic. It takes its data from our own
 a Raspberry Pi running [adsb.im](https://adsb.im), and it will flag aircraft with the
 [Fight or Flight](https://github.com/kieranhj/fight-or-flight) rules. Plain C on the Pico SDK.
 
-**Status: P0, bring-up.** The first firmware builds: the panel, touch and Wi-Fi, with the Pi's
-aircraft drawn as dots on a radar. It hasn't been tried on the board yet. See [PLAN.md](PLAN.md)
-for what's coming and why.
+**Status: P0, bring-up.** It runs on the board: the panel, touch and Wi-Fi work, and the Pi's
+aircraft are drawn as dots on a radar. See [PLAN.md](PLAN.md) for what's coming and why.
 
 ## Build
 
@@ -28,6 +27,15 @@ ninja -C build                              # -> build/presto_air_traffic.uf2
 Hold **BOOT** on the back of the Presto and tap **RESET**. It shows up as a USB drive called
 `RP2350`; copy `build/presto_air_traffic.uf2` onto it. To go back to other firmware, flash that
 firmware's `.uf2` the same way.
+
+With picotool, which can also reboot this firmware into the bootloader over USB:
+
+```sh
+picotool load -f -v -x build/presto_air_traffic.uf2
+```
+
+If the board had firmware with a partition table on it, such as rp2350-bbc-micro's dual-boot,
+the first load needs `--ignore-partitions`.
 
 ## Using it (P0)
 
