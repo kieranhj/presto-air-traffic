@@ -54,8 +54,8 @@ the first load needs `--ignore-partitions`.
 - **Top line:** a green dot and "Live" while the data's fresh; yellow while Wi-Fi joins; red, with
   the age, when the Pi hasn't answered for 5 s. The aircraft count is on the right.
 - **Tap an aircraft** (on the radar, or a row of the list, which is a swipe right away) for its
-  details and route along the bottom; close them with the ×, by swiping down on them, or by tapping
-  empty map. Swipe left for the status screen.
+  details and route along the bottom. Close them with the ×, a swipe down anywhere on the radar,
+  or a tap on empty map. Swipe left for the status screen.
 - **− and +** at the bottom right step the range through 5, 10, 20 and 40 NM.
 - **USB serial:** every 5 s it reports the frame rate, Wi-Fi, fetches, aircraft, drawing times,
   the PSRAM self-test's error count (should be 0) and taps.
