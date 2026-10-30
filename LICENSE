@@ -24,5 +24,11 @@ Third-party code in this repository keeps its own licence:
 - src/drivers/st7701.c and src/drivers/*.pio: ported from / copied from
   Pimoroni's presto drivers, MIT, Copyright (c) 2024 Pimoroni Ltd
   (src/drivers/LICENSE.pimoroni).
+- src/drivers/psram.c: from SparkFun's sfe_psram.c, MIT, Copyright (c) 2024
+  SparkFun Electronics (src/drivers/LICENSE.sparkfun).
 - boards/pimoroni_presto.h and pico_sdk_import.cmake: Raspberry Pi (Trading)
   Ltd, BSD-3-Clause.
+- tools/fonts/ and the glyphs in src/font_data.c: IBM Plex Sans Condensed,
+  Copyright 2017 IBM Corp., SIL Open Font License 1.1 (tools/fonts/OFL.txt).
+- src/map_data.c: map data (c) OpenStreetMap contributors, Open Database
+  License (https://www.openstreetmap.org/copyright).

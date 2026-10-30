@@ -62,6 +62,14 @@ build-host/feed_test aircraft.json
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). The panel driver is ported from Pimoroni's MIT-licensed
-[presto](https://github.com/pimoroni/presto) driver (`src/drivers/LICENSE.pimoroni`). The board
-header and `pico_sdk_import.cmake` are Raspberry Pi's, under BSD-3-Clause.
+MIT, see [LICENSE](LICENSE). Some parts keep their own licences:
+
+- **Panel driver:** ported from Pimoroni's MIT-licensed [presto](https://github.com/pimoroni/presto)
+  driver (`src/drivers/LICENSE.pimoroni`).
+- **PSRAM set-up:** from SparkFun's MIT-licensed
+  [sparkfun-pico](https://github.com/sparkfun/sparkfun-pico) (`src/drivers/LICENSE.sparkfun`).
+- **Font:** IBM Plex Sans Condensed, under the SIL Open Font License (`tools/fonts/OFL.txt`).
+- **Map:** © OpenStreetMap contributors, under the
+  [ODbL](https://www.openstreetmap.org/copyright). The radar shows the credit.
+  `tools/make_map.py` rebuilds it from one Overpass download, backing off if the server's busy.
+- **Board header and `pico_sdk_import.cmake`:** Raspberry Pi's, under BSD-3-Clause.
