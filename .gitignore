@@ -1,0 +1,5 @@
+build/
+build-*/
+# your Wi-Fi details and addresses (src/secrets.example.h)
+src/secrets.h
+__pycache__/
