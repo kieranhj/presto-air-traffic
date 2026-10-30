@@ -140,8 +140,13 @@ bool ui_touch(const touch_state_t *t, const feed_t *feed, uint32_t now_ms) {
     if (!was_down) return false;
     was_down = false;
 
-    // released: a swipe, a scroll of the list, or a tap
+    // released: a swipe, a scroll of the list, a swipe down on the details strip, or a tap
     int dx = last_x - start_x, dy = last_y - start_y;
+    if (current == SCREEN_RADAR && selected[0] && start_y >= STRIP_Y - TAP_SLOP && dy >= SWIPE_MIN / 2 &&
+        dy > 2 * abs(dx)) {
+        select_aircraft(NULL, now_ms);      // closes the strip
+        return true;
+    }
     if (abs(dx) >= SWIPE_MIN && abs(dx) > 2 * abs(dy)) {
         int next = current + (dx < 0 ? 1 : -1);
         if (next < 0 || next >= SCREENS) return false;
