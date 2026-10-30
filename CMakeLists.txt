@@ -23,8 +23,10 @@ add_executable(presto_air_traffic
         ${SRC}/palette.c
         ${SRC}/radar.c
         ${SRC}/font_data.c
+        ${SRC}/map_data.c
         ${SRC}/drivers/st7701.c
         ${SRC}/drivers/ft6236.c
+        ${SRC}/drivers/psram.c
         )
 pico_generate_pio_header(presto_air_traffic ${SRC}/drivers/st7701_parallel.pio)
 pico_generate_pio_header(presto_air_traffic ${SRC}/drivers/st7701_timing.pio)

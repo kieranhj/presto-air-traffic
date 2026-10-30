@@ -8,7 +8,8 @@
 #define GFX_W 480
 #define GFX_H 480
 
-void gfx_init(uint8_t *framebuffer);
+// What to draw into: the screen's framebuffer or another of the same size.
+void gfx_set_target(uint8_t *framebuffer);
 void gfx_clear(uint8_t c);
 void gfx_pixel(int x, int y, uint8_t c);
 void gfx_hline(int x0, int x1, int y, uint8_t c);

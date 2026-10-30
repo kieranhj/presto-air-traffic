@@ -5,7 +5,7 @@
 
 static uint8_t *fb;
 
-void gfx_init(uint8_t *framebuffer) {
+void gfx_set_target(uint8_t *framebuffer) {
     fb = framebuffer;
 }
 
@@ -29,16 +29,45 @@ void gfx_fill_rect(int x, int y, int w, int h, uint8_t c) {
     for (int j = y; j < y + h; j++) gfx_hline(x, x + w - 1, j, c);
 }
 
+#define CLAMP(v, lo, hi) ((v) < (lo) ? (lo) : (v) > (hi) ? (hi) : (v))
+
+// Liang-Barsky: clips the segment to the screen; false if none of it is on it
+static int clip_t(int p, int q, float *t0, float *t1) {
+    if (p == 0) return q >= 0;
+    float r = (float)q / p;
+    if (p < 0) {
+        if (r > *t1) return 0;
+        if (r > *t0) *t0 = r;
+    } else {
+        if (r < *t0) return 0;
+        if (r < *t1) *t1 = r;
+    }
+    return 1;
+}
+
 void gfx_line(int x0, int y0, int x1, int y1, uint8_t c) {
+    if ((unsigned)x0 >= GFX_W || (unsigned)y0 >= GFX_H || (unsigned)x1 >= GFX_W || (unsigned)y1 >= GFX_H) {
+        int dx = x1 - x0, dy = y1 - y0;
+        float t0 = 0, t1 = 1;
+        if (!clip_t(-dx, x0, &t0, &t1) || !clip_t(dx, GFX_W - 1 - x0, &t0, &t1) ||
+            !clip_t(-dy, y0, &t0, &t1) || !clip_t(dy, GFX_H - 1 - y0, &t0, &t1))
+            return;
+        int nx0 = x0 + (int)(t0 * dx + (dx >= 0 ? 0.5f : -0.5f)), ny0 = y0 + (int)(t0 * dy + (dy >= 0 ? 0.5f : -0.5f));
+        int nx1 = x0 + (int)(t1 * dx + (dx >= 0 ? 0.5f : -0.5f)), ny1 = y0 + (int)(t1 * dy + (dy >= 0 ? 0.5f : -0.5f));
+        x0 = CLAMP(nx0, 0, GFX_W - 1); y0 = CLAMP(ny0, 0, GFX_H - 1);
+        x1 = CLAMP(nx1, 0, GFX_W - 1); y1 = CLAMP(ny1, 0, GFX_H - 1);
+    }
+    // all on screen now: write the pixels directly
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? GFX_W : -GFX_W;
     int err = dx + dy;
+    uint8_t *p = &fb[y0 * GFX_W + x0], *end = &fb[y1 * GFX_W + x1];
     for (;;) {
-        gfx_pixel(x0, y0, c);
-        if (x0 == x1 && y0 == y1) break;
+        *p = c;
+        if (p == end) break;
         int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
+        if (e2 >= dy) { err += dy; p += sx; }
+        if (e2 <= dx) { err += dx; p += sy; }
     }
 }
 

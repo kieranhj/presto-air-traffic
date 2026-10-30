@@ -1,10 +1,14 @@
 #include "radar.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "pico/time.h"
+
 #include "gfx.h"
+#include "map.h"
 #include "palette.h"
 
 #define CX 240
@@ -35,6 +39,7 @@ static trail_t trails[FEED_MAX_AIRCRAFT];
 
 static bool have_receiver;
 static double rx_lat, rx_lon, rx_coslat;
+static float rx_map_e, rx_map_n;    // the receiver in NM east and north of the map's origin
 
 // -- zoom buttons
 typedef struct {
@@ -46,6 +51,8 @@ void radar_set_receiver(double lat, double lon) {
     rx_lat = lat;
     rx_lon = lon;
     rx_coslat = cos(lat * M_PI / 180);
+    rx_map_e = (float)((lon - map.origin_lon) * 60 * cos(map.origin_lat * M_PI / 180));
+    rx_map_n = (float)((lat - map.origin_lat) * 60);
     have_receiver = true;
 }
 
@@ -128,6 +135,81 @@ static const text_colour_t band_text[] = {T_GROUND, T_ALT_LOW, T_ALT_MID, T_ALT_
 static void to_screen(float e, float n, float px_per_nm, int *x, int *y) {
     *x = CX + (int)lroundf(e * px_per_nm);
     *y = CY - (int)lroundf(n * px_per_nm);
+}
+
+// -- the background map: needs the receiver's position to place it
+
+static const uint8_t map_colour[] = {
+    [MAP_COAST] = C_MAP_COAST, [MAP_MOTORWAY] = C_MAP_MOTORWAY, [MAP_TRUNK] = C_MAP_TRUNK,
+    [MAP_PRIMARY] = C_MAP_PRIMARY, [MAP_RUNWAY] = C_MAP_RUNWAY,
+};
+
+static uint32_t map_us, map_segments;
+
+static inline int iround(float v) {
+    return (int)(v + (v >= 0 ? 0.5f : -0.5f));
+}
+
+static void draw_map(float px_per_nm) {
+    if (!have_receiver) return;
+    uint32_t t0 = time_us_32();
+    map_segments = 0;
+    int range = ranges[range_i].range_nm;
+    const float k = map.unit_m / 1852.0f * px_per_nm;     // pixels per map unit
+    const float ox = CX - rx_map_e * px_per_nm, oy = CY + rx_map_n * px_per_nm;    // the map's origin
+    // what's on screen, in map units (with a margin for runway widths and labels)
+    const float vx0 = (-8 - ox) / k, vx1 = (GFX_W + 8 - ox) / k;
+    const float vy0 = (oy - GFX_H - 8) / k, vy1 = (oy + 8) / k;
+
+    for (uint32_t i = 0; i < map.line_count; i++) {
+        const map_line_t *l = &map.lines[i];
+        if (l->cls == MAP_PRIMARY && range > 20) continue;
+        if (l->box[2] < vx0 || l->box[0] > vx1 || l->box[3] < vy0 || l->box[1] > vy1) continue;
+        const int16_t *p = &map.xy[l->start * 2];
+        uint8_t c = map_colour[l->cls];
+        int px = iround(ox + p[0] * k), py = iround(oy - p[1] * k);
+        map_segments += l->n - 1;
+        for (int j = 1; j < l->n; j++) {
+            int x = iround(ox + p[2 * j] * k), y = iround(oy - p[2 * j + 1] * k);
+            gfx_line(px, py, x, y, c);
+            if (l->cls == MAP_RUNWAY || (l->cls == MAP_MOTORWAY && range <= 10)) {
+                // thicker: one more pixel either side, across the line's main direction
+                int ddx = abs(x - px) >= abs(y - py) ? 0 : 1, ddy = 1 - ddx;
+                gfx_line(px + ddx, py + ddy, x + ddx, y + ddy, c);
+                if (l->cls == MAP_RUNWAY) gfx_line(px - ddx, py - ddy, x - ddx, y - ddy, c);
+            }
+            px = x;
+            py = y;
+        }
+    }
+
+    // town names: the biggest at every range, more as you zoom in. The table is biggest first,
+    // and a name that would overlap one already drawn is left out.
+    enum { MAX_NAMES = 48, PAD = 4 };
+    rect_t placed[MAX_NAMES];
+    int n_placed = 0;
+    int max_rank = range > 20 ? 0 : range > 10 ? 1 : 2;
+    for (uint32_t i = 0; i < map.place_count && n_placed < MAX_NAMES; i++) {
+        const map_place_t *pl = &map.places[i];
+        if (pl->rank > max_rank) continue;
+        int x = iround(ox + pl->x * k), y = iround(oy - pl->y * k);
+        if (x < 0 || x >= GFX_W || y < 30 || y >= GFX_H - 30) continue;
+        rect_t r = {x - 2, y - 8, gfx_text_width(&font_small, pl->name) + 9, 16};
+        bool clash = false;
+        for (int j = 0; j < n_placed && !clash; j++)
+            clash = r.x < placed[j].x + placed[j].w + PAD && placed[j].x < r.x + r.w + PAD &&
+                    r.y < placed[j].y + placed[j].h + PAD && placed[j].y < r.y + r.h + PAD;
+        if (clash) continue;
+        placed[n_placed++] = r;
+        gfx_fill_rect(x - 1, y - 1, 3, 3, C_MAP_TOWN);
+        gfx_text(&font_small, x + 5, y + 5, pl->name, TEXT_RAMP(T_MAP));
+    }
+    map_us = time_us_32() - t0;
+}
+
+void radar_map_stats(uint32_t *us, uint32_t *segments) {
+    *us = map_us;
+    *segments = map_segments;
 }
 
 static void draw_rings(float px_per_nm) {
@@ -231,15 +313,53 @@ static void draw_status(const radar_status_t *st, int shown) {
 
     snprintf(text, sizeof text, shown == 1 ? "1 aircraft" : "%d aircraft", shown);
     gfx_text(&font_small, GFX_W - 10 - gfx_text_width(&font_small, text), 22, text, TEXT_RAMP(T_GREY));
-
-    snprintf(text, sizeof text, "%d NM", ranges[range_i].range_nm);
-    gfx_text(&font_large, 12, GFX_H - 14, text, TEXT_RAMP(T_WHITE));
 }
 
-void radar_draw(const feed_t *feed, const radar_status_t *st) {
-    const float px_per_nm = (float)RADIUS / ranges[range_i].range_nm;
+// What changes only with the range: the background, the map, the rings, the range label and the
+// map's credit.
+static void draw_base(float px_per_nm) {
     gfx_clear(C_BG);
+    draw_map(px_per_nm);
     draw_rings(px_per_nm);
+
+    char text[12];
+    snprintf(text, sizeof text, "%d NM", ranges[range_i].range_nm);
+    int w = gfx_text(&font_large, 12, GFX_H - 14, text, TEXT_RAMP(T_WHITE));
+    // the map's credit (OpenStreetMap's licence asks for it)
+    if (have_receiver)
+        gfx_text(&font_small, 12 + w + 12, GFX_H - 15, "\x7f OpenStreetMap", TEXT_RAMP(T_MAP));
+}
+
+static uint8_t *base_layer, *back_buffer, *screen;
+static int base_range_i = -1;
+static bool base_has_receiver;
+
+void radar_set_buffers(uint8_t *screen_fb, uint8_t *base, uint8_t *back) {
+    screen = screen_fb;
+    base_layer = base;
+    back_buffer = back;
+    base_range_i = -1;
+}
+
+uint8_t *radar_draw(const feed_t *feed, const radar_status_t *st) {
+    const float px_per_nm = (float)RADIUS / ranges[range_i].range_nm;
+    uint8_t *target = screen;
+    if (base_layer && back_buffer) {
+        // the base layer only when the range or the map's placement has changed; then a copy of
+        // it to draw the rest on
+        if (base_range_i != range_i || base_has_receiver != have_receiver) {
+            gfx_set_target(base_layer);
+            draw_base(px_per_nm);
+            base_range_i = range_i;
+            base_has_receiver = have_receiver;
+        }
+        memcpy(back_buffer, base_layer, GFX_W * GFX_H);
+        target = back_buffer;
+        gfx_set_target(target);
+    } else {
+        gfx_set_target(target);
+        draw_base(px_per_nm);
+    }
 
     // trails first, so arrows and labels sit on top of every trail
     int shown = 0;
@@ -271,6 +391,7 @@ void radar_draw(const feed_t *feed, const radar_status_t *st) {
     draw_status(st, shown);
     draw_button(&btn_out, false);
     draw_button(&btn_in, true);
+    return target;
 }
 
 static bool hit(const rect_t *r, int x, int y) {

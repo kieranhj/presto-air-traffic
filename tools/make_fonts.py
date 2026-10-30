@@ -4,9 +4,9 @@ doesn't need Pillow). Run again after changing a size here:
 
     python tools/make_fonts.py
 
-Each font is printable ASCII (32-126), anti-aliased, 4 bits of coverage a pixel, two pixels a
-byte. Glyphs are rasterised from IBM Plex Sans Condensed (tools/fonts, SIL Open Font License 1.1,
-tools/fonts/OFL.txt).
+Each font is printable ASCII (32-126) plus character 127 drawn as a copyright sign,
+anti-aliased, 4 bits of coverage a pixel, two pixels a byte. Glyphs are rasterised from IBM Plex
+Sans Condensed (tools/fonts, SIL Open Font License 1.1, tools/fonts/OFL.txt).
 """
 from pathlib import Path
 
@@ -18,7 +18,7 @@ FONTS = [
     ("font_small", "IBMPlexSansCondensed-Medium.ttf", 15),
     ("font_large", "IBMPlexSansCondensed-SemiBold.ttf", 22),
 ]
-FIRST, LAST = 32, 126
+FIRST, LAST = 32, 127      # 127 is drawn as the copyright sign, for map credits
 
 
 def rasterise(path: Path, size: int):
@@ -26,7 +26,7 @@ def rasterise(path: Path, size: int):
     ascent, descent = font.getmetrics()
     glyphs, data = [], bytearray()
     for code in range(FIRST, LAST + 1):
-        ch = chr(code)
+        ch = "©" if code == 127 else chr(code)
         advance = round(font.getlength(ch))
         box = font.getbbox(ch, anchor="ls")     # relative to the pen on the baseline
         w, h = max(0, box[2] - box[0]), max(0, box[3] - box[1])
@@ -60,7 +60,7 @@ def main():
         out.append("};")
         out.append(f"static const font_glyph_t {name}_glyphs[{len(glyphs)}] = {{")
         for (offset, w, h, x, y, adv), code in zip(glyphs, range(FIRST, LAST + 1)):
-            c = chr(code)
+            c = "©" if code == 127 else chr(code)
             shown = c if c not in "\\'" else "\\" + c
             out.append(f"    {{{offset}, {w}, {h}, {x}, {y}, {adv}}},  // '{shown}'")
         out.append("};")

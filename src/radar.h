@@ -21,9 +21,18 @@ bool radar_has_receiver(void);
 // Adds each aircraft's new position to its trail. Call once per new aircraft.json.
 void radar_track(const feed_t *feed, uint32_t now_ms);
 
-void radar_draw(const feed_t *feed, const radar_status_t *status);
+// Two more screen-sized buffers (in PSRAM) let it keep the map in a layer that's only redrawn
+// when the range changes, and compose each frame off screen. Without them it draws straight onto
+// `screen`, every time.
+void radar_set_buffers(uint8_t *screen, uint8_t *base_layer, uint8_t *back_buffer);
+
+// Draws the radar. Returns where: the back buffer (copy it to the screen at vsync) or the screen.
+uint8_t *radar_draw(const feed_t *feed, const radar_status_t *status);
 
 // A touch going down at (x, y). Returns true if it changed what's drawn.
 bool radar_touch(int x, int y);
 
 int radar_range_nm(void);
+
+// The last redraw's map: its time and the line segments it drew.
+void radar_map_stats(uint32_t *us, uint32_t *segments);

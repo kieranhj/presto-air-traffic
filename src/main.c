@@ -14,6 +14,7 @@
 #include "palette.h"
 #include "radar.h"
 #include "drivers/ft6236.h"
+#include "drivers/psram.h"
 #include "drivers/st7701.h"
 
 #if __has_include("secrets.h")
@@ -27,7 +28,9 @@
 #define REDRAW_EVERY_MS   1000      // at least, so the status line's ages tick over
 #define REPORT_EVERY_MS   5000
 
-static uint8_t framebuffer[ST7701_WIDTH * ST7701_HEIGHT] __attribute__((aligned(4)));
+#define SCREEN_BYTES (ST7701_WIDTH * ST7701_HEIGHT)
+
+static uint8_t framebuffer[SCREEN_BYTES] __attribute__((aligned(4)));
 static uint32_t palette[256] __attribute__((aligned(1024)));
 static char json[96 * 1024];
 static feed_t feed;
@@ -44,14 +47,19 @@ static uint32_t now_ms(void) {
 
 int main(void) {
     stdio_init_all();
-    gfx_init(framebuffer);
+    // PSRAM first, while core 1 isn't running: its set-up takes over the QMI the flash is on
+    size_t psram = psram_init(PIMORONI_PRESTO_PSRAM_CS_PIN);
+    if (psram >= 2 * SCREEN_BYTES) radar_set_buffers(framebuffer, PSRAM_BASE, PSRAM_BASE + SCREEN_BYTES);
+    else radar_set_buffers(framebuffer, NULL, NULL);
+    gfx_set_target(framebuffer);
     gfx_clear(C_BG);
     multicore_launch_core1(core1_main);
     multicore_fifo_pop_blocking();
     palette_init();
 
     ft6236_init();
-    printf("presto-air-traffic\n");
+    printf("presto-air-traffic: PSRAM %u KB%s\n", (unsigned)(psram / 1024),
+           psram >= 2 * SCREEN_BYTES ? "" : " (not enough: drawing straight to the screen)");
     if (!net_init(WIFI_SSID, WIFI_PASSWORD)) printf("net: the radio didn't start\n");
 
     enum { GET_NONE, GET_RECEIVER, GET_AIRCRAFT } in_flight = GET_NONE;
@@ -59,7 +67,7 @@ int main(void) {
     bool was_down = false, redraw = true, have_data = false;
     uint32_t next_fetch = 0, next_receiver = 0, next_redraw = 0, next_report = REPORT_EVERY_MS;
     uint32_t last_ok = 0, fetch_started = 0, fetch_ms = 0, fetches = 0, fails = 0, taps = 0;
-    uint32_t frames_at_report = 0, draw_us = 0, draw_us_max = 0;
+    uint32_t frames_at_report = 0, draw_us = 0, draw_us_max = 0, copy_us = 0;
     size_t last_len = 0;
 
     for (;;) {
@@ -126,27 +134,35 @@ int main(void) {
                 .wifi_state = net_state(),
                 .data_age_ms = have_data ? (int32_t)(now - last_ok) : -1,
             };
-            st7701_wait_vsync();
             uint32_t t0 = time_us_32();
-            radar_draw(&feed, &st);
+            uint8_t *drawn = radar_draw(&feed, &st);
             draw_us = time_us_32() - t0;
             if (draw_us > draw_us_max) draw_us_max = draw_us;
+            if (drawn != framebuffer) {
+                // top to bottom from the start of a frame, faster than the panel reads it: no tearing
+                st7701_wait_vsync();
+                t0 = time_us_32();
+                memcpy(framebuffer, drawn, SCREEN_BYTES);
+                copy_us = time_us_32() - t0;
+            }
             redraw = false;
             next_redraw = now + REDRAW_EVERY_MS;
         }
 
         if ((int32_t)(now - next_report) >= 0) {
-            uint32_t f = st7701_frames();
+            uint32_t f = st7701_frames(), map_us, map_segments;
+            radar_map_stats(&map_us, &map_segments);
             int with_pos = 0;
             for (int i = 0; i < feed.count; i++) with_pos += feed.aircraft[i].has_pos;
             printf("fps %.1f | wifi %s %s rssi %d | receiver %s | fetches %lu fails %lu last %lu ms "
-                   "%u bytes | aircraft %d (%d with position) | range %d NM | draw %lu us (max %lu) | "
-                   "taps %lu\n",
+                   "%u bytes | aircraft %d (%d with position) | range %d NM | draw %lu us (max %lu; "
+                   "map %lu us, %lu segments; copy %lu us) | taps %lu\n",
                    (f - frames_at_report) * 1000.0 / REPORT_EVERY_MS, net_state(), net_ip(),
                    net_up() ? net_rssi() : 0, radar_has_receiver() ? "yes" : "no",
                    (unsigned long)fetches, (unsigned long)fails, (unsigned long)fetch_ms,
                    (unsigned)last_len, feed.count, with_pos, radar_range_nm(),
-                   (unsigned long)draw_us, (unsigned long)draw_us_max, (unsigned long)taps);
+                   (unsigned long)draw_us, (unsigned long)draw_us_max, (unsigned long)map_us,
+                   (unsigned long)map_segments, (unsigned long)copy_us, (unsigned long)taps);
             frames_at_report = f;
             next_report = now + REPORT_EVERY_MS;
         }

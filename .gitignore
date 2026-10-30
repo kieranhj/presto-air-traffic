@@ -3,3 +3,5 @@ build-*/
 # your Wi-Fi details and addresses (src/secrets.example.h)
 src/secrets.h
 __pycache__/
+# the raw OpenStreetMap download (tools/make_map.py --fetch)
+tools/map/
