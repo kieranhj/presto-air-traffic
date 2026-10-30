@@ -376,6 +376,7 @@ static void draw_status_screen(const feed_t *feed, const ui_status_t *st) {
     status_row(&y, "Running for", v, T_WHITE);
     snprintf(v, sizeof v, "built %s", __DATE__);
     status_row(&y, "Firmware", v, T_WHITE);
+    if (st->last_restart[0]) status_row(&y, "Restarted", st->last_restart, T_BAD);
     routes_stats_t rs;
     routes_stats(&rs, st->uptime_s * 1000);
     if (rs.backoff_s) snprintf(v, sizeof v, "%lu, %lu failed; paused %lu s (HTTP %d)", (unsigned long)rs.lookups,

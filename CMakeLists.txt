@@ -25,6 +25,7 @@ add_executable(presto_air_traffic
         ${SRC}/ui.c
         ${SRC}/routes.c
         ${SRC}/roots.c
+        ${SRC}/crash.c
         ${SRC}/font_data.c
         ${SRC}/map_data.c
         ${SRC}/drivers/st7701.c
@@ -41,7 +42,7 @@ target_compile_definitions(presto_air_traffic PRIVATE
         PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0)
 target_link_libraries(presto_air_traffic PRIVATE
         pico_stdlib pico_multicore
-        hardware_pio hardware_dma hardware_spi hardware_pwm hardware_i2c hardware_xip_cache
+        hardware_pio hardware_dma hardware_spi hardware_pwm hardware_i2c hardware_xip_cache hardware_watchdog
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_http
         pico_lwip_mbedtls pico_mbedtls)

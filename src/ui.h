@@ -20,11 +20,11 @@ typedef struct {
     uint32_t psram_kb, psram_errors;
     uint32_t uptime_s;
     const char *pi_host;
+    const char *last_restart;   // crash_last(): why it last restarted, "" if it wasn't a crash
 } ui_status_t;
 
 // `screen` is the panel's framebuffer. `base_layer` and `back_buffer`, screen-sized and in PSRAM,
-// let frames be composed off screen (and the radar keep its map); without them (NULL) everything
-// is drawn straight onto the screen.
+// let frames be composed off screen (and the radar keep its map).
 void ui_init(uint8_t *screen, uint8_t *base_layer, uint8_t *back_buffer);
 
 // Feeds it the touch controller's state. Returns true if what's shown has changed.
