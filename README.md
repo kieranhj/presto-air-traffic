@@ -5,8 +5,9 @@ touchscreen, Wi-Fi) that shows local air traffic. It takes its data from our own
 a Raspberry Pi running [adsb.im](https://adsb.im), and it will flag aircraft with the
 [Fight or Flight](https://github.com/kieranhj/fight-or-flight) rules. Plain C on the Pico SDK.
 
-**Status: P0, bring-up.** It runs on the board: the panel, touch and Wi-Fi work, and the Pi's
-aircraft are drawn as dots on a radar. See [PLAN.md](PLAN.md) for what's coming and why.
+**Status: P1, the radar.** It shows the Pi's aircraft on a radar over a light OpenStreetMap
+background, with trails, labels and zoom. Tapping aircraft and the flags come next. See
+[PLAN.md](PLAN.md) for what's coming and why.
 
 ## Build
 
@@ -37,20 +38,24 @@ picotool load -f -v -x build/presto_air_traffic.uf2
 If the board had firmware with a partition table on it, such as rp2350-bbc-micro's dual-boot,
 the first load needs `--ignore-partitions`.
 
-## Using it (P0)
+## Using it
 
-- **On the screen:** the radar is centred on the receiver, with north up. Aircraft are dots with a
-  heading line, coloured by altitude:
+- **The radar** is centred on the receiver (the Pi tells the Presto where it is), with north up,
+  over a dim map of roads, the coast, runways and towns.
+- **Aircraft** are darts pointing along their track, with a two-minute trail, coloured by
+  altitude:
   - orange, below 3,000 ft;
   - yellow, 3,000–10,000 ft;
   - green, 10,000–20,000 ft;
   - blue, above 20,000 ft;
   - grey, on the ground or with no altitude.
-- **The square at the top left:** green when the data is fresh, yellow while Wi-Fi is joining,
-  red when the Pi hasn't answered for 5 s.
-- **Touch:** tap anywhere to change the range, through 5, 10, 20 and 40 NM.
-- **The bars along the bottom** are a palette test: smooth red, green and blue ramps.
-- **USB serial:** every 5 s it reports the frame rate, Wi-Fi, fetches, aircraft and taps.
+- **Labels:** the callsign (or registration), then the altitude in hundreds of feet ("035" is
+  3,500 ft, "GND" on the ground), with a small triangle if it's climbing or descending.
+- **Top line:** a green dot and "Live" while the data's fresh; yellow while Wi-Fi joins; red, with
+  the age, when the Pi hasn't answered for 5 s. The aircraft count is on the right.
+- **− and +** at the bottom right step the range through 5, 10, 20 and 40 NM.
+- **USB serial:** every 5 s it reports the frame rate, Wi-Fi, fetches, aircraft, drawing times,
+  the PSRAM self-test's error count (should be 0) and taps.
 
 ## Test on the host
 

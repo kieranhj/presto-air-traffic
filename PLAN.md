@@ -2,8 +2,8 @@
 
 A desk display for local air traffic: a Pimoroni Presto showing what our own receiver (the Pi,
 `docs/RECEIVER-PLAN.md` in fight-or-flight) hears, flagged with the
-[Fight or Flight](https://github.com/kieranhj/fight-or-flight) rules. Status: **P0 in progress**
-(see [P0 status](#p0-status)).
+[Fight or Flight](https://github.com/kieranhj/fight-or-flight) rules. Status: **P1 done**, with
+the base map from P3 brought forward (see [Progress](#progress)); P2 next.
 
 ## Decisions so far
 
@@ -45,16 +45,26 @@ The Pimoroni Presto has:
 - **Know-how** from the BBC project (PIO and DMA budgets, flash writes needing core 1 locked out,
   Wi-Fi setup on the screen), but no code.
 
-**New work:**
+- **PSRAM:** SparkFun's set-up (`sfe_psram.c`, MIT), ported to `src/drivers/psram.c`, with the
+  read delay set from the clock divisor (see [Progress](#progress)).
 
-- **Double buffering.** P0 draws straight into the buffer being scanned out, just after vsync, so a
-  redraw can tear. The fix is a back buffer in PSRAM (8 MB, unused so far) copied in at vsync, or
-  drawing only what changed.
-- **A small drawing layer:** lines, circles and fills so far (`src/gfx.c`); still to come are
-  filled polygons, a font, and rotated aircraft icons.
-- **A JSON reader** for `aircraft.json` (`src/feed.c`). It reads the whole body from a 96 KB buffer
-  without building a parse tree. The file is about 6 KB with 10 aircraft and should be around
-  50 KB on a busy afternoon. Reading it as it streams in would free most of that buffer.
+**Written for this project:**
+
+- **Drawing** (`src/gfx.c`): clipped lines, circles, fills, triangles, and anti-aliased text from
+  IBM Plex Sans Condensed (OFL), rasterised at 15 and 22 px by `tools/make_fonts.py` and drawn
+  through 15-shade palette ramps.
+- **Frames composed in PSRAM:** the map, rings and range label are drawn into a PSRAM layer only
+  when the range changes; each redraw copies it to a PSRAM back buffer and draws the aircraft on
+  top; the finished frame is copied to the screen at vsync, faster than the panel scans. No
+  tearing, no flicker.
+- **The map** (`tools/make_map.py` → `src/map_data.c`): OpenStreetMap coastline, motorways and
+  trunk roads to 60 NM, primary roads to 25 NM, runways over 800 m and town names, from one split
+  Overpass download with backoff. Stored relative to EGLF's reference point, so the house isn't in
+  it. Shown with the OSM credit the ODbL asks for.
+- **A JSON reader** for `aircraft.json` and `receiver.json` (`src/feed.c`). It reads the whole
+  body from a 96 KB buffer without building a parse tree. The file is about 6 KB with 10 aircraft
+  and should be around 50 KB on a busy afternoon. Reading it as it streams in would free most of
+  that buffer.
 
 ## Data flow
 
@@ -195,8 +205,8 @@ The 7 LEDs on the back glow; the piezo is never used.
   - the station position from `receiver.json`, zoom, and the stale-data indicator.
 - **P2, interaction:** tap to select, the details strip, the list and status screens, and swiping
   between them.
-- **P3, map layers:** the runway and airport markers, the WebTrak swaths and the coverage outline,
-  all generated from the repo data at build time.
+- **P3, map layers:** the WebTrak swaths, the coverage outline, and airport labels, all generated
+  from the repo data at build time. (The base map, with runways, came early: see Progress.)
 - **P4, flags:**
   - the generated rules header, the C classify and rules engine, SNTP and UK time;
   - the host test that diffs the C against the TypeScript;
@@ -209,9 +219,9 @@ The 7 LEDs on the back glow; the piezo is never used.
   - power from the Pi;
   - optionally a QR code to the app.
 
-## P0 status
+## Progress
 
-Done (2026-10-30):
+### P0, bring-up (2026-10-30)
 
 - The firmware builds with no warnings: `build/presto_air_traffic.uf2`, 370 KB of flash. Static
   RAM is 412 KB of 520 KB:
@@ -232,14 +242,33 @@ Done (2026-10-30):
   - the first bug: the palette was set before core 1 had started the panel, so every colour
     was black. Core 0 now waits for the panel first.
 
-To do:
+### P1, radar, and the base map (2026-10-30)
+
+- **The radar:** darts by track, coloured by altitude band, with two-minute trails; labels with
+  the callsign and altitude in hundreds of feet, and a climb or descent mark; range rings with
+  distances; a status line ("Live", "No data for N s", the Wi-Fi state) and an aircraft count;
+  − and + buttons through 5, 10, 20 and 40 NM. Confirmed on the board: labels sharp, buttons fine.
+- **The station position** comes from the Pi's `receiver.json` at start, never from the source.
+- **The map** looked right at the brightness chosen, and is steady.
+- **Timings at 20 NM:** the map layer takes 20 ms when the range changes (7,180 segments); a
+  redraw takes about 34 ms off screen; the copy to the screen 6.5 ms. Flash 536 KB.
+- **Bugs found and fixed:**
+  - a redraw straight into the scanned-out buffer flickered the top rows: fixed by composing
+    in PSRAM;
+  - drawing the map every second took 19 ms, nearly a whole frame: fixed by keeping it in a
+    layer;
+  - **PSRAM read too early:** SparkFun's read delay of 1 gave 69,332 wrong words in 115,200 at
+    200 MHz, seen as a shimmering map and blurred labels. A delay of 2 gives none. The start-up
+    self-test (`psram_test`) reports the count over USB.
+
+### Still to do from P0 and P1
 
 - Measure the current draw with a USB meter.
-- Check the palette ramps along the bottom are smooth, and whether the once-a-second redraw tears.
+- A redraw takes 34 ms of core 0, mostly copying the map layer between PSRAM buffers; reading
+  the layer past the cache, or composing in SRAM bands, would cut it.
 
 ## Open questions
 
-- Double buffering: a PSRAM back buffer, or redrawing only what changed.
 - The rules-header generator reads fight-or-flight's `src/config/`. It could live here, given the
   path to a fight-or-flight checkout, or in fight-or-flight so it tracks config changes there.
 - Whether the Worker should offer a slim endpoint that returns precomputed flags. That would keep
