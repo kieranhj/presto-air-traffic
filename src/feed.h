@@ -43,3 +43,6 @@ typedef struct {
 
 // Parses `len` bytes of aircraft.json. Returns false if it isn't that file's shape.
 bool feed_parse(const char *json, size_t len, feed_t *out);
+
+// Parses receiver.json for the station's position. Returns false if it has none.
+bool feed_parse_receiver(const char *json, size_t len, double *lat, double *lon);

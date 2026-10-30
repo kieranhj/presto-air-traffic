@@ -65,3 +65,55 @@ void gfx_disc(int cx, int cy, int r, uint8_t c) {
         else { x--; err += 2 * (y - x) + 1; }
     }
 }
+
+void gfx_fill_triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint8_t c) {
+    // sort by y, then fill each scanline between the long edge and the short ones
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
+    if (y1 > y2) { int t = y1; y1 = y2; y2 = t; t = x1; x1 = x2; x2 = t; }
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
+    if (y2 == y0) {
+        int lo = x0 < x1 ? x0 : x1, hi = x0 > x1 ? x0 : x1;
+        if (x2 < lo) lo = x2;
+        if (x2 > hi) hi = x2;
+        gfx_hline(lo, hi, y0, c);
+        return;
+    }
+    for (int y = y0; y <= y2; y++) {
+        int xa = x0 + (x2 - x0) * (y - y0) / (y2 - y0);
+        int xb = y < y1 ? (y1 == y0 ? x1 : x0 + (x1 - x0) * (y - y0) / (y1 - y0))
+                        : (y2 == y1 ? x1 : x1 + (x2 - x1) * (y - y1) / (y2 - y1));
+        gfx_hline(xa, xb, y, c);
+    }
+}
+
+int gfx_text(const font_t *font, int x, int y, const char *s, uint8_t ramp) {
+    int x0 = x;
+    for (; *s; s++) {
+        uint8_t ch = (uint8_t)*s;
+        if (ch < font->first || ch > font->last) ch = '?';
+        const font_glyph_t *g = &font->glyphs[ch - font->first];
+        const uint8_t *row = font->bits + g->offset;
+        int stride = (g->w + 1) / 2;
+        for (int j = 0; j < g->h; j++, row += stride) {
+            int py = y + g->y + j;
+            if ((unsigned)py >= GFX_H) continue;
+            for (int i = 0; i < g->w; i++) {
+                int cov = i & 1 ? row[i >> 1] & 0x0f : row[i >> 1] >> 4;
+                int px = x + g->x + i;
+                if (cov && (unsigned)px < GFX_W) fb[py * GFX_W + px] = (uint8_t)(ramp + cov - 1);
+            }
+        }
+        x += g->advance;
+    }
+    return x - x0;
+}
+
+int gfx_text_width(const font_t *font, const char *s) {
+    int w = 0;
+    for (; *s; s++) {
+        uint8_t ch = (uint8_t)*s;
+        if (ch < font->first || ch > font->last) ch = '?';
+        w += font->glyphs[ch - font->first].advance;
+    }
+    return w;
+}

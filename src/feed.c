@@ -176,3 +176,21 @@ bool feed_parse(const char *json, size_t len, feed_t *out) {
     }
     return saw_aircraft;
 }
+
+bool feed_parse_receiver(const char *json, size_t len, double *lat, double *lon) {
+    cur_t c = {json, json + len};
+    bool has_lat = false, has_lon = false;
+    if (!eat(&c, '{')) return false;
+    if (eat(&c, '}')) return false;
+    for (;;) {
+        char key[16];
+        if (!string(&c, key, sizeof key) || !eat(&c, ':')) return false;
+        double v;
+        if (!strcmp(key, "lat") && number(&c, &v)) { *lat = v; has_lat = true; }
+        else if (!strcmp(key, "lon") && number(&c, &v)) { *lon = v; has_lon = true; }
+        else if (!skip_value(&c, 1)) return false;
+        if (eat(&c, '}')) break;
+        if (!eat(&c, ',')) return false;
+    }
+    return has_lat && has_lon;
+}

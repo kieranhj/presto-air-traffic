@@ -20,6 +20,9 @@ add_executable(presto_air_traffic
         ${SRC}/feed.c
         ${SRC}/gfx.c
         ${SRC}/net.c
+        ${SRC}/palette.c
+        ${SRC}/radar.c
+        ${SRC}/font_data.c
         ${SRC}/drivers/st7701.c
         ${SRC}/drivers/ft6236.c
         )
