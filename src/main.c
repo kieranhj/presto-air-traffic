@@ -49,6 +49,7 @@ int main(void) {
     stdio_init_all();
     // PSRAM first, while core 1 isn't running: its set-up takes over the QMI the flash is on
     size_t psram = psram_init(PIMORONI_PRESTO_PSRAM_CS_PIN);
+    uint32_t psram_errors = psram ? psram_test(2 * SCREEN_BYTES) : 0;
     if (psram >= 2 * SCREEN_BYTES) radar_set_buffers(framebuffer, PSRAM_BASE, PSRAM_BASE + SCREEN_BYTES);
     else radar_set_buffers(framebuffer, NULL, NULL);
     gfx_set_target(framebuffer);
@@ -156,13 +157,13 @@ int main(void) {
             for (int i = 0; i < feed.count; i++) with_pos += feed.aircraft[i].has_pos;
             printf("fps %.1f | wifi %s %s rssi %d | receiver %s | fetches %lu fails %lu last %lu ms "
                    "%u bytes | aircraft %d (%d with position) | range %d NM | draw %lu us (max %lu; "
-                   "map %lu us, %lu segments; copy %lu us) | taps %lu\n",
+                   "map %lu us, %lu segments; copy %lu us) | PSRAM errors %lu | taps %lu\n",
                    (f - frames_at_report) * 1000.0 / REPORT_EVERY_MS, net_state(), net_ip(),
                    net_up() ? net_rssi() : 0, radar_has_receiver() ? "yes" : "no",
                    (unsigned long)fetches, (unsigned long)fails, (unsigned long)fetch_ms,
                    (unsigned)last_len, feed.count, with_pos, radar_range_nm(),
                    (unsigned long)draw_us, (unsigned long)draw_us_max, (unsigned long)map_us,
-                   (unsigned long)map_segments, (unsigned long)copy_us, (unsigned long)taps);
+                   (unsigned long)map_segments, (unsigned long)copy_us, (unsigned long)psram_errors, (unsigned long)taps);
             frames_at_report = f;
             next_report = now + REPORT_EVERY_MS;
         }

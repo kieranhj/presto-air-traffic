@@ -38,10 +38,16 @@ target_compile_definitions(presto_air_traffic PRIVATE
         PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0)
 target_link_libraries(presto_air_traffic PRIVATE
         pico_stdlib pico_multicore
-        hardware_pio hardware_dma hardware_spi hardware_pwm hardware_i2c
+        hardware_pio hardware_dma hardware_spi hardware_pwm hardware_i2c hardware_xip_cache
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_http)
 
 pico_enable_stdio_usb(presto_air_traffic 1)
 pico_enable_stdio_uart(presto_air_traffic 0)
 pico_add_extra_outputs(presto_air_traffic)
+
+# -DPSRAM_RXDELAY=n: force the PSRAM's read delay (testing; normally set from the clock)
+set(PSRAM_RXDELAY "" CACHE STRING "Force the PSRAM read delay (testing)")
+if (PSRAM_RXDELAY)
+    target_compile_definitions(presto_air_traffic PRIVATE PSRAM_RXDELAY=${PSRAM_RXDELAY})
+endif()

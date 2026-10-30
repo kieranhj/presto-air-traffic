@@ -9,3 +9,7 @@
 // Finds and sets up the PSRAM on `cs_pin` (the Presto's is 47). Returns its size, 0 if none.
 // Call before core 1 starts: it briefly takes over the QMI, which the flash also uses.
 size_t psram_init(uint32_t cs_pin);
+
+// Writes a pattern over the first `bytes` and reads it back past the cache. Returns the words that
+// came back wrong (0 if the PSRAM's timing is right). It overwrites what was there.
+uint32_t psram_test(size_t bytes);

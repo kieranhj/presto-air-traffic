@@ -33,6 +33,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "hardware/structs/xip_ctrl.h"
 #include "hardware/sync.h"
 #include "psram.h"
+#include "hardware/xip_cache.h"
 
 // DETAILS/
 //
@@ -165,6 +166,14 @@ static void __no_inline_not_in_flash_func(set_psram_timing)(void)
     // Calculate the clock divider - goal to get clock used for PSRAM <= what
     // the PSRAM IC can handle - which is defined in SFE_PSRAM_MAX_SCK_HZ
     volatile uint8_t clockDivider = (sysHz + SFE_PSRAM_MAX_SCK_HZ - 1) / SFE_PSRAM_MAX_SCK_HZ;
+    // Sample reads a whole PSRAM clock later, and later still above 100 MHz. SparkFun used 1: on
+    // the Presto at 200 MHz (a 100 MHz PSRAM clock) psram_test found 69,332 of 115,200 words
+    // wrong with 1, and none with 2. (-DPSRAM_RXDELAY=n forces it, for tests like that one.)
+#ifdef PSRAM_RXDELAY
+    volatile uint8_t rxDelay = PSRAM_RXDELAY;
+#else
+    volatile uint8_t rxDelay = clockDivider + (sysHz / clockDivider > 100000000 ? 1 : 0);
+#endif
 
     uint32_t intr_stash = save_and_disable_interrupts();
 
@@ -186,7 +195,7 @@ static void __no_inline_not_in_flash_func(set_psram_timing)(void)
 
     qmi_hw->m[1].timing = QMI_M1_TIMING_PAGEBREAK_VALUE_1024 << QMI_M1_TIMING_PAGEBREAK_LSB | // Break between pages.
                           3 << QMI_M1_TIMING_SELECT_HOLD_LSB | // Delay releasing CS for 3 extra system cycles.
-                          1 << QMI_M1_TIMING_COOLDOWN_LSB | 1 << QMI_M1_TIMING_RXDELAY_LSB |
+                          1 << QMI_M1_TIMING_COOLDOWN_LSB | rxDelay << QMI_M1_TIMING_RXDELAY_LSB |
                           maxSelect << QMI_M1_TIMING_MAX_SELECT_LSB | minDeselect << QMI_M1_TIMING_MIN_DESELECT_LSB |
                           clockDivider << QMI_M1_TIMING_CLKDIV_LSB;
 
@@ -287,4 +296,24 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint32_t psram_cs_pin)
 size_t psram_init(uint32_t psram_cs_pin)
 {
     return setup_psram(psram_cs_pin);
+}
+
+uint32_t psram_test(size_t bytes)
+{
+    // a pattern that changes every word and every pass, written through the cache, then read
+    // back past it (the uncached alias) once the cache has written everything out
+    volatile uint32_t *cached = (volatile uint32_t *)PSRAM_BASE;
+    volatile uint32_t *uncached = (volatile uint32_t *)(PSRAM_BASE + 0x04000000);   // 0x15000000
+    uint32_t words = bytes / 4, errors = 0, x = 0x12345678;
+    for (uint32_t i = 0; i < words; i++) {
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        cached[i] = x;
+    }
+    xip_cache_clean_all();
+    x = 0x12345678;
+    for (uint32_t i = 0; i < words; i++) {
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        if (uncached[i] != x) errors++;
+    }
+    return errors;
 }
