@@ -11,7 +11,7 @@
 #include "map.h"
 #include "palette.h"
 
-#define CX 240
+#define CX 240                  // the screen's centre: the receiver's, until the map's panned
 #define CY 240
 #define RADIUS 228              // pixels to the outer ring
 
@@ -27,6 +27,11 @@ static const struct {
 } ranges[] = {{5, 1}, {10, 2}, {20, 5}, {40, 10}};
 #define RANGES ((int)(sizeof ranges / sizeof ranges[0]))
 static int range_i = 2;
+
+// Panning: where the view's centre is, in NM east and north of the receiver; it stays within the
+// range of it. hx, hy are the receiver's place on screen for the drawing under way.
+static float view_e, view_n;
+static int hx = CX, hy = CY;
 
 typedef struct {
     char hex[8];
@@ -46,6 +51,7 @@ typedef struct {
     int x, y, w, h;
 } rect_t;
 static rect_t btn_out = {356, 416, 52, 52}, btn_in = {418, 416, 52, 52};
+static rect_t btn_centre = {294, 416, 52, 52};     // shown only when the map's panned
 
 void radar_set_receiver(double lat, double lon) {
     rx_lat = lat;
@@ -150,8 +156,8 @@ text_colour_t radar_alt_text(const aircraft_t *a) {
 }
 
 static void to_screen(float e, float n, float px_per_nm, int *x, int *y) {
-    *x = CX + (int)lroundf(e * px_per_nm);
-    *y = CY - (int)lroundf(n * px_per_nm);
+    *x = hx + (int)lroundf(e * px_per_nm);
+    *y = hy - (int)lroundf(n * px_per_nm);
 }
 
 // -- the background map: needs the receiver's position to place it
@@ -173,7 +179,7 @@ static void draw_map(float px_per_nm) {
     map_segments = 0;
     int range = ranges[range_i].range_nm;
     const float k = map.unit_m / 1852.0f * px_per_nm;     // pixels per map unit
-    const float ox = CX - rx_map_e * px_per_nm, oy = CY + rx_map_n * px_per_nm;    // the map's origin
+    const float ox = hx - rx_map_e * px_per_nm, oy = hy + rx_map_n * px_per_nm;    // the map's origin
     // what's on screen, in map units (with a margin for runway widths and labels)
     const float vx0 = (-8 - ox) / k, vx1 = (GFX_W + 8 - ox) / k;
     const float vy0 = (oy - GFX_H - 8) / k, vy1 = (oy + 8) / k;
@@ -230,19 +236,19 @@ void radar_map_stats(uint32_t *us, uint32_t *segments) {
 }
 
 static void draw_rings(float px_per_nm) {
-    gfx_line(CX, CY - RADIUS, CX, CY + RADIUS, C_AXIS);
-    gfx_line(CX - RADIUS, CY, CX + RADIUS, CY, C_AXIS);
+    gfx_line(hx, hy - RADIUS, hx, hy + RADIUS, C_AXIS);
+    gfx_line(hx - RADIUS, hy, hx + RADIUS, hy, C_AXIS);
     int range = ranges[range_i].range_nm, step = ranges[range_i].ring_nm;
     for (int nm = step; nm <= range; nm += step) {
         int r = (int)lroundf(nm * px_per_nm);
-        gfx_circle(CX, CY, r, C_RING);
+        gfx_circle(hx, hy, r, C_RING);
         char label[12];
         snprintf(label, sizeof label, nm == range ? "%d NM" : "%d", nm);
         // on the ring, just below the east axis
-        gfx_text(&font_small, CX + r - gfx_text_width(&font_small, label) - 3, CY + 15, label,
+        gfx_text(&font_small, hx + r - gfx_text_width(&font_small, label) - 3, hy + 15, label,
                  TEXT_RAMP(T_RING));
     }
-    gfx_fill_triangle(CX, CY - RADIUS - 9, CX - 5, CY - RADIUS + 1, CX + 5, CY - RADIUS + 1, C_RING);
+    gfx_fill_triangle(hx, hy - RADIUS - 9, hx - 5, hy - RADIUS + 1, hx + 5, hy - RADIUS + 1, C_RING);
 }
 
 static void draw_trail(const trail_t *t, int bx, int by, float px_per_nm, uint8_t colour) {
@@ -312,7 +318,7 @@ static void draw_base(float px_per_nm) {
 }
 
 static uint8_t *base_layer;
-static int base_range_i = -1;
+static int base_range_i = -1, base_hx, base_hy;
 static bool base_has_receiver;
 
 // Where each aircraft was last drawn, for radar_pick
@@ -329,14 +335,18 @@ void radar_set_base_layer(uint8_t *base) {
 
 void radar_draw(uint8_t *target, const feed_t *feed, const char *selected, int bottom) {
     const float px_per_nm = (float)RADIUS / ranges[range_i].range_nm;
+    hx = CX - (int)lroundf(view_e * px_per_nm);
+    hy = CY + (int)lroundf(view_n * px_per_nm);
     if (base_layer) {
         // the base layer only when the range or the map's placement has changed; then a copy of
         // it to draw the rest on
-        if (base_range_i != range_i || base_has_receiver != have_receiver) {
+        if (base_range_i != range_i || base_has_receiver != have_receiver || base_hx != hx || base_hy != hy) {
             gfx_set_target(base_layer);
             draw_base(px_per_nm);
             base_range_i = range_i;
             base_has_receiver = have_receiver;
+            base_hx = hx;
+            base_hy = hy;
         }
         memcpy(target, base_layer, GFX_W * GFX_H);
         gfx_set_target(target);
@@ -377,8 +387,8 @@ void radar_draw(uint8_t *target, const feed_t *feed, const char *selected, int b
         if (on[i]) draw_label(sx[i], sy[i], &feed->aircraft[i], band_text[band(&feed->aircraft[i])]);
 
     // the receiver
-    gfx_fill_rect(CX - 1, CY - 6, 3, 13, C_HOUSE);
-    gfx_fill_rect(CX - 6, CY - 1, 13, 3, C_HOUSE);
+    gfx_fill_rect(hx - 1, hy - 6, 3, 13, C_HOUSE);
+    gfx_fill_rect(hx - 6, hy - 1, 13, 3, C_HOUSE);
 
     // the range, the map's credit (OpenStreetMap's licence asks for it) and the zoom buttons,
     // along the bottom of what's free
@@ -387,9 +397,21 @@ void radar_draw(uint8_t *target, const feed_t *feed, const char *selected, int b
     int w = gfx_text(&font_large, 12, bottom - 14, text, TEXT_RAMP(T_WHITE));
     if (have_receiver)
         gfx_text(&font_small, 12 + w + 12, bottom - 15, "\x7f OpenStreetMap", TEXT_RAMP(T_MAP));
-    btn_out.y = btn_in.y = bottom - 64;
+    btn_out.y = btn_in.y = btn_centre.y = bottom - 64;
     draw_button(&btn_out, false);
     draw_button(&btn_in, true);
+    if (radar_panned()) {
+        // a target: a ring and a dot
+        gfx_fill_rect(btn_centre.x, btn_centre.y, btn_centre.w, btn_centre.h, C_PANEL);
+        gfx_hline(btn_centre.x, btn_centre.x + btn_centre.w - 1, btn_centre.y, C_PANEL_EDGE);
+        gfx_hline(btn_centre.x, btn_centre.x + btn_centre.w - 1, btn_centre.y + btn_centre.h - 1, C_PANEL_EDGE);
+        gfx_fill_rect(btn_centre.x, btn_centre.y, 1, btn_centre.h, C_PANEL_EDGE);
+        gfx_fill_rect(btn_centre.x + btn_centre.w - 1, btn_centre.y, 1, btn_centre.h, C_PANEL_EDGE);
+        int cx = btn_centre.x + btn_centre.w / 2, cy = btn_centre.y + btn_centre.h / 2;
+        gfx_circle(cx, cy, 11, C_HOUSE);
+        gfx_circle(cx, cy, 10, C_HOUSE);
+        gfx_disc(cx, cy, 3, C_HOUSE);
+    }
 }
 
 int radar_pick(int x, int y) {
@@ -410,11 +432,40 @@ static bool hit(const rect_t *r, int x, int y) {
     return x >= r->x - slop && x < r->x + r->w + slop && y >= r->y - slop && y < r->y + r->h + slop;
 }
 
+// Keeps the view's centre within the range of the receiver
+static void clamp_view(void) {
+    float limit = (float)ranges[range_i].range_nm, d = sqrtf(view_e * view_e + view_n * view_n);
+    if (d > limit) {
+        view_e *= limit / d;
+        view_n *= limit / d;
+    }
+}
+
+bool radar_panned(void) {
+    return view_e != 0 || view_n != 0;
+}
+
+bool radar_pan(int dx, int dy) {
+    const float px_per_nm = (float)RADIUS / ranges[range_i].range_nm;
+    float e = view_e, n = view_n;
+    // the map follows the finger: the view moves the other way
+    view_e -= dx / px_per_nm;
+    view_n += dy / px_per_nm;
+    clamp_view();
+    return view_e != e || view_n != n;
+}
+
 bool radar_button(int x, int y, bool *changed) {
     *changed = false;
+    if (radar_panned() && hit(&btn_centre, x, y)) {
+        view_e = view_n = 0;
+        *changed = true;
+        return true;
+    }
     if (hit(&btn_in, x, y)) {
         if (range_i > 0) {
             range_i--;
+            clamp_view();
             *changed = true;
         }
         return true;
@@ -422,6 +473,7 @@ bool radar_button(int x, int y, bool *changed) {
     if (hit(&btn_out, x, y)) {
         if (range_i < RANGES - 1) {
             range_i++;
+            clamp_view();
             *changed = true;
         }
         return true;

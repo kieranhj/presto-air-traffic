@@ -57,6 +57,8 @@ the first load needs `--ignore-partitions`.
   details and route along the bottom. Close them with the ×, a swipe down anywhere on the radar,
   or a tap on empty map. Swipe left for the status screen.
 - **− and +** at the bottom right step the range through 5, 10, 20 and 40 NM.
+- **Pan:** touch the map, hold still for a moment, then drag. It goes no further than the range
+  from home; the target button that appears beside − puts home back in the middle.
 - **USB serial:** every 5 s it reports the frame rate, Wi-Fi, fetches, aircraft, drawing times,
   the PSRAM self-test's error count (should be 0) and taps.
 

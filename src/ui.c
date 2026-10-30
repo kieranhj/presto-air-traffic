@@ -22,6 +22,7 @@ enum { SCREEN_LIST, SCREEN_RADAR, SCREEN_STATUS, SCREENS };
 #define TAP_SLOP 22             // a touch that moves less than this is a tap
 #define SWIPE_MIN 70            // a horizontal swipe moves at least this
 #define FORGET_SELECTED_MS 60000    // a selected aircraft that's gone is let go after this
+#define HOLD_MS 350             // a touch held still this long drags the map
 
 static uint8_t *screen, *back_buffer;
 static int current = SCREEN_RADAR;
@@ -35,9 +36,11 @@ static uint32_t selected_seen_ms;
 static int list_scroll;
 static char list_hex[LIST_ROWS][8];
 
-// The touch in progress
-static bool was_down;
-static int start_x, start_y, last_x, last_y;
+// The touch in progress: where it started and is now; whether it has moved (a swipe), or was
+// held still long enough to drag the map (panning, from pan_x, pan_y)
+static bool was_down, moved, panning;
+static int start_x, start_y, last_x, last_y, pan_x, pan_y;
+static uint32_t down_ms;
 
 void ui_init(uint8_t *screen_fb, uint8_t *base_layer, uint8_t *back) {
     screen = screen_fb;
@@ -130,15 +133,40 @@ bool ui_touch(const touch_state_t *t, const feed_t *feed, uint32_t now_ms) {
         if (!was_down) {
             start_x = last_x = p->x;
             start_y = last_y = p->y;
+            down_ms = now_ms;
+            moved = panning = false;
         } else {
             last_x = p->x;
             last_y = p->y;
         }
         was_down = true;
+
+        // on the radar, a touch held still for HOLD_MS, away from the buttons and the strip,
+        // then drags the map; one that moves sooner is a swipe (or a tap) as usual
+        if (current == SCREEN_RADAR && !panning && !moved) {
+            int bottom = selected[0] ? STRIP_Y : GFX_H;
+            bool on_controls = start_y >= bottom - 72 && start_x >= 280;
+            if (abs(last_x - start_x) >= TAP_SLOP || abs(last_y - start_y) >= TAP_SLOP) moved = true;
+            else if (now_ms - down_ms >= HOLD_MS && start_y < bottom && !on_controls) {
+                panning = true;
+                pan_x = last_x;
+                pan_y = last_y;
+            }
+        }
+        if (panning && (last_x != pan_x || last_y != pan_y)) {
+            int dx = last_x - pan_x, dy = last_y - pan_y;
+            pan_x = last_x;
+            pan_y = last_y;
+            return radar_pan(dx, dy);
+        }
         return false;
     }
     if (!was_down) return false;
     was_down = false;
+    if (panning) {
+        panning = false;
+        return true;
+    }
 
     // released: a swipe, a scroll of the list, a swipe down on the radar, or a tap
     int dx = last_x - start_x, dy = last_y - start_y;

@@ -36,8 +36,14 @@ void radar_draw(uint8_t *target, const feed_t *feed, const char *selected, int b
 // The feed index of the aircraft drawn nearest (x, y), within reach of a finger; -1 if none.
 int radar_pick(int x, int y);
 
-// A tap at (x, y) on a zoom button? `changed` says whether the range changed.
+// A tap at (x, y) on a zoom button, or the centre button (shown when panned)? `changed` says
+// whether that changed the view.
 bool radar_button(int x, int y, bool *changed);
+
+// Drags the map by (dx, dy) pixels, keeping the view's centre within the range of the receiver.
+// Returns true if it moved.
+bool radar_pan(int dx, int dy);
+bool radar_panned(void);
 
 int radar_range_nm(void);
 
