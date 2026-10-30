@@ -1,5 +1,5 @@
 // Presto air traffic display (PLAN.md). Fetches the Pi's receiver.json once (the station's
-// position) and its aircraft.json every second, and draws them on the radar (radar.c). A status
+// position) and its aircraft.json every second, and shows them on the screens in ui.c. A status
 // line goes to the USB serial port every 5 s.
 //
 // Core 1 runs the panel's interrupts and nothing else; core 0 does everything else.
@@ -13,6 +13,7 @@
 #include "net.h"
 #include "palette.h"
 #include "radar.h"
+#include "ui.h"
 #include "drivers/ft6236.h"
 #include "drivers/psram.h"
 #include "drivers/st7701.h"
@@ -50,8 +51,8 @@ int main(void) {
     // PSRAM first, while core 1 isn't running: its set-up takes over the QMI the flash is on
     size_t psram = psram_init(PIMORONI_PRESTO_PSRAM_CS_PIN);
     uint32_t psram_errors = psram ? psram_test(2 * SCREEN_BYTES) : 0;
-    if (psram >= 2 * SCREEN_BYTES) radar_set_buffers(framebuffer, PSRAM_BASE, PSRAM_BASE + SCREEN_BYTES);
-    else radar_set_buffers(framebuffer, NULL, NULL);
+    bool composed = psram >= 2 * SCREEN_BYTES && !psram_errors;
+    ui_init(framebuffer, composed ? PSRAM_BASE : NULL, composed ? PSRAM_BASE + SCREEN_BYTES : NULL);
     gfx_set_target(framebuffer);
     gfx_clear(C_BG);
     multicore_launch_core1(core1_main);
@@ -60,31 +61,24 @@ int main(void) {
 
     ft6236_init();
     printf("presto-air-traffic: PSRAM %u KB%s\n", (unsigned)(psram / 1024),
-           psram >= 2 * SCREEN_BYTES ? "" : " (not enough: drawing straight to the screen)");
+           composed ? "" : " (not usable: drawing straight to the screen)");
     if (!net_init(WIFI_SSID, WIFI_PASSWORD)) printf("net: the radio didn't start\n");
 
     enum { GET_NONE, GET_RECEIVER, GET_AIRCRAFT } in_flight = GET_NONE;
     touch_state_t touch = {0};
-    bool was_down = false, redraw = true, have_data = false;
+    bool redraw = true, have_data = false;
     uint32_t next_fetch = 0, next_receiver = 0, next_redraw = 0, next_report = REPORT_EVERY_MS;
-    uint32_t last_ok = 0, fetch_started = 0, fetch_ms = 0, fetches = 0, fails = 0, taps = 0;
+    uint32_t last_ok = 0, fetch_started = 0, fetch_ms = 0, fetches = 0, fails = 0;
     uint32_t frames_at_report = 0, draw_us = 0, draw_us_max = 0, copy_us = 0;
+    uint32_t messages_at = 0, messages_ms = 0;
+    float messages_per_s = 0, fps = 0;
     size_t last_len = 0;
 
     for (;;) {
         uint32_t now = now_ms();
         net_poll();
 
-        if (ft6236_poll(&touch)) {
-            bool down = touch.count > 0;
-            if (down && !was_down) {
-                taps++;
-                if (radar_touch(touch.p[0].down ? touch.p[0].x : touch.p[1].x,
-                                touch.p[0].down ? touch.p[0].y : touch.p[1].y))
-                    redraw = true;
-            }
-            was_down = down;
-        }
+        if (ft6236_poll(&touch) && ui_touch(&touch, &feed, now)) redraw = true;
 
         // one GET at a time: the station's position until we have it, then the aircraft
         if (in_flight == GET_NONE && net_up()) {
@@ -112,6 +106,7 @@ int main(void) {
                 } else {
                     printf("receiver: no position (HTTP %d), retrying\n", http);
                 }
+                redraw = true;
             } else if (in_flight == GET_AIRCRAFT) {
                 fetch_ms = now - fetch_started;
                 fetches++;
@@ -120,6 +115,16 @@ int main(void) {
                     last_ok = now;
                     have_data = true;
                     radar_track(&feed, now);
+                    ui_update(&feed, now);
+                    // the receiver's message rate, over at least 10 s
+                    if (!messages_ms || feed.messages < messages_at) {
+                        messages_at = feed.messages;
+                        messages_ms = now;
+                    } else if (now - messages_ms >= 10000) {
+                        messages_per_s = (feed.messages - messages_at) * 1000.0f / (now - messages_ms);
+                        messages_at = feed.messages;
+                        messages_ms = now;
+                    }
                 } else {
                     fails++;
                     printf("fetch: failed (HTTP %d, %u bytes)\n", http, (unsigned)len);
@@ -130,13 +135,21 @@ int main(void) {
         }
 
         if (redraw || (int32_t)(now - next_redraw) >= 0) {
-            radar_status_t st = {
+            ui_status_t st = {
                 .wifi_up = net_up(),
                 .wifi_state = net_state(),
+                .ip = net_ip(),
+                .rssi = net_up() ? net_rssi() : 0,
                 .data_age_ms = have_data ? (int32_t)(now - last_ok) : -1,
+                .messages_per_s = messages_per_s,
+                .fps = fps,
+                .psram_kb = (uint32_t)(psram / 1024),
+                .psram_errors = psram_errors,
+                .uptime_s = now / 1000,
+                .pi_host = PI_HOST,
             };
             uint32_t t0 = time_us_32();
-            uint8_t *drawn = radar_draw(&feed, &st);
+            uint8_t *drawn = ui_draw(&feed, &st, now);
             draw_us = time_us_32() - t0;
             if (draw_us > draw_us_max) draw_us_max = draw_us;
             if (drawn != framebuffer) {
@@ -152,18 +165,19 @@ int main(void) {
 
         if ((int32_t)(now - next_report) >= 0) {
             uint32_t f = st7701_frames(), map_us, map_segments;
+            fps = (f - frames_at_report) * 1000.0f / REPORT_EVERY_MS;
             radar_map_stats(&map_us, &map_segments);
             int with_pos = 0;
             for (int i = 0; i < feed.count; i++) with_pos += feed.aircraft[i].has_pos;
             printf("fps %.1f | wifi %s %s rssi %d | receiver %s | fetches %lu fails %lu last %lu ms "
-                   "%u bytes | aircraft %d (%d with position) | range %d NM | draw %lu us (max %lu; "
-                   "map %lu us, %lu segments; copy %lu us) | PSRAM errors %lu | taps %lu\n",
-                   (f - frames_at_report) * 1000.0 / REPORT_EVERY_MS, net_state(), net_ip(),
-                   net_up() ? net_rssi() : 0, radar_has_receiver() ? "yes" : "no",
-                   (unsigned long)fetches, (unsigned long)fails, (unsigned long)fetch_ms,
-                   (unsigned)last_len, feed.count, with_pos, radar_range_nm(),
-                   (unsigned long)draw_us, (unsigned long)draw_us_max, (unsigned long)map_us,
-                   (unsigned long)map_segments, (unsigned long)copy_us, (unsigned long)psram_errors, (unsigned long)taps);
+                   "%u bytes | aircraft %d (%d with position) | %.0f msg/s | range %d NM | draw %lu us "
+                   "(max %lu; map %lu us, %lu segments; copy %lu us) | PSRAM errors %lu\n",
+                   fps, net_state(), net_ip(), net_up() ? net_rssi() : 0,
+                   radar_has_receiver() ? "yes" : "no", (unsigned long)fetches, (unsigned long)fails,
+                   (unsigned long)fetch_ms, (unsigned)last_len, feed.count, with_pos, messages_per_s,
+                   radar_range_nm(), (unsigned long)draw_us, (unsigned long)draw_us_max,
+                   (unsigned long)map_us, (unsigned long)map_segments, (unsigned long)copy_us,
+                   (unsigned long)psram_errors);
             frames_at_report = f;
             next_report = now + REPORT_EVERY_MS;
         }

@@ -22,6 +22,7 @@ add_executable(presto_air_traffic
         ${SRC}/net.c
         ${SRC}/palette.c
         ${SRC}/radar.c
+        ${SRC}/ui.c
         ${SRC}/font_data.c
         ${SRC}/map_data.c
         ${SRC}/drivers/st7701.c

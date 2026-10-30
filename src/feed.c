@@ -105,6 +105,7 @@ static bool aircraft(cur_t *c, aircraft_t *a) {
         else if (!strcmp(key, "flight")) { ok = string(c, a->flight, sizeof a->flight); trim(a->flight); }
         else if (!strcmp(key, "r")) ok = string(c, a->reg, sizeof a->reg);
         else if (!strcmp(key, "t")) ok = string(c, a->type, sizeof a->type);
+        else if (!strcmp(key, "desc")) ok = string(c, a->desc, sizeof a->desc);
         else if (!strcmp(key, "category")) ok = string(c, a->category, sizeof a->category);
         else if (!strcmp(key, "squawk")) ok = string(c, a->squawk, sizeof a->squawk);
         else if (!strcmp(key, "alt_baro")) {

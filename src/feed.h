@@ -13,6 +13,7 @@ typedef struct {
     char flight[9];     // callsign, trailing spaces removed
     char reg[12];       // registration (r), from the Pi's database
     char type[8];       // ICAO type designator (t)
+    char desc[28];      // the type in words (desc), e.g. "AIRBUS A-320neo"
     char category[3];   // emitter category, e.g. "A3", "A7" (rotorcraft)
     char squawk[5];
 

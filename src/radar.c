@@ -41,11 +41,11 @@ static bool have_receiver;
 static double rx_lat, rx_lon, rx_coslat;
 static float rx_map_e, rx_map_n;    // the receiver in NM east and north of the map's origin
 
-// -- zoom buttons
+// -- zoom buttons, which sit just above `bottom` (radar_draw's)
 typedef struct {
     int x, y, w, h;
 } rect_t;
-static const rect_t btn_out = {356, 416, 52, 52}, btn_in = {418, 416, 52, 52};
+static rect_t btn_out = {356, 416, 52, 52}, btn_in = {418, 416, 52, 52};
 
 void radar_set_receiver(double lat, double lon) {
     rx_lat = lat;
@@ -120,6 +120,15 @@ void radar_track(const feed_t *feed, uint32_t now_ms) {
 
 // -- drawing
 
+bool radar_range_bearing(const aircraft_t *a, float *nm, float *deg) {
+    float e, n;
+    if (!position_nm(a, &e, &n)) return false;
+    *nm = sqrtf(e * e + n * n);
+    float b = atan2f(e, n) * 180 / (float)M_PI;
+    *deg = b < 0 ? b + 360 : b;
+    return true;
+}
+
 static int band(const aircraft_t *a) {
     if (!a->has_alt || a->on_ground) return 0;
     if (a->alt_baro < 3000) return 1;
@@ -131,6 +140,14 @@ static int band(const aircraft_t *a) {
 static const uint8_t band_colour[] = {C_GROUND, C_ALT_LOW, C_ALT_MID, C_ALT_HIGH, C_ALT_TOP};
 static const uint8_t band_trail[] = {C_TRAIL_GROUND, C_TRAIL_LOW, C_TRAIL_MID, C_TRAIL_HIGH, C_TRAIL_TOP};
 static const text_colour_t band_text[] = {T_GROUND, T_ALT_LOW, T_ALT_MID, T_ALT_HIGH, T_ALT_TOP};
+
+uint8_t radar_alt_colour(const aircraft_t *a) {
+    return band_colour[band(a)];
+}
+
+text_colour_t radar_alt_text(const aircraft_t *a) {
+    return band_text[band(a)];
+}
 
 static void to_screen(float e, float n, float px_per_nm, int *x, int *y) {
     *x = CX + (int)lroundf(e * px_per_nm);
@@ -287,64 +304,32 @@ static void draw_button(const rect_t *b, bool plus) {
     if (plus) gfx_fill_rect(cx - 2, cy - 11, 4, 22, C_HOUSE);
 }
 
-static void draw_status(const radar_status_t *st, int shown) {
-    char text[40];
-    uint8_t dot;
-    text_colour_t col;
-    if (!st->wifi_up) {
-        snprintf(text, sizeof text, "Wi-Fi: %s", st->wifi_state);
-        dot = C_WAIT;
-        col = T_WAIT;
-    } else if (st->data_age_ms < 0) {
-        snprintf(text, sizeof text, "Waiting for the receiver");
-        dot = C_WAIT;
-        col = T_WAIT;
-    } else if (st->data_age_ms > 5000) {
-        snprintf(text, sizeof text, "No data for %ld s", (long)(st->data_age_ms / 1000));
-        dot = C_BAD;
-        col = T_BAD;
-    } else {
-        snprintf(text, sizeof text, "Live");
-        dot = C_OK;
-        col = T_GREY;
-    }
-    gfx_disc(16, 17, 5, dot);
-    gfx_text(&font_small, 28, 22, text, TEXT_RAMP(col));
-
-    snprintf(text, sizeof text, shown == 1 ? "1 aircraft" : "%d aircraft", shown);
-    gfx_text(&font_small, GFX_W - 10 - gfx_text_width(&font_small, text), 22, text, TEXT_RAMP(T_GREY));
-}
-
-// What changes only with the range: the background, the map, the rings, the range label and the
-// map's credit.
+// What changes only with the range: the background, the map and the rings
 static void draw_base(float px_per_nm) {
     gfx_clear(C_BG);
     draw_map(px_per_nm);
     draw_rings(px_per_nm);
-
-    char text[12];
-    snprintf(text, sizeof text, "%d NM", ranges[range_i].range_nm);
-    int w = gfx_text(&font_large, 12, GFX_H - 14, text, TEXT_RAMP(T_WHITE));
-    // the map's credit (OpenStreetMap's licence asks for it)
-    if (have_receiver)
-        gfx_text(&font_small, 12 + w + 12, GFX_H - 15, "\x7f OpenStreetMap", TEXT_RAMP(T_MAP));
 }
 
-static uint8_t *base_layer, *back_buffer, *screen;
+static uint8_t *base_layer;
 static int base_range_i = -1;
 static bool base_has_receiver;
 
-void radar_set_buffers(uint8_t *screen_fb, uint8_t *base, uint8_t *back) {
-    screen = screen_fb;
+// Where each aircraft was last drawn, for radar_pick
+static int drawn_count;
+static struct {
+    int16_t x, y;
+    uint8_t index;
+} drawn[FEED_MAX_AIRCRAFT];
+
+void radar_set_base_layer(uint8_t *base) {
     base_layer = base;
-    back_buffer = back;
     base_range_i = -1;
 }
 
-uint8_t *radar_draw(const feed_t *feed, const radar_status_t *st) {
+void radar_draw(uint8_t *target, const feed_t *feed, const char *selected, int bottom) {
     const float px_per_nm = (float)RADIUS / ranges[range_i].range_nm;
-    uint8_t *target = screen;
-    if (base_layer && back_buffer) {
+    if (base_layer) {
         // the base layer only when the range or the map's placement has changed; then a copy of
         // it to draw the rest on
         if (base_range_i != range_i || base_has_receiver != have_receiver) {
@@ -353,8 +338,7 @@ uint8_t *radar_draw(const feed_t *feed, const radar_status_t *st) {
             base_range_i = range_i;
             base_has_receiver = have_receiver;
         }
-        memcpy(back_buffer, base_layer, GFX_W * GFX_H);
-        target = back_buffer;
+        memcpy(target, base_layer, GFX_W * GFX_H);
         gfx_set_target(target);
     } else {
         gfx_set_target(target);
@@ -362,9 +346,9 @@ uint8_t *radar_draw(const feed_t *feed, const radar_status_t *st) {
     }
 
     // trails first, so arrows and labels sit on top of every trail
-    int shown = 0;
-    int sx[FEED_MAX_AIRCRAFT], sy[FEED_MAX_AIRCRAFT];
+    int sx[FEED_MAX_AIRCRAFT], sy[FEED_MAX_AIRCRAFT], sel = -1;
     bool on[FEED_MAX_AIRCRAFT];
+    drawn_count = 0;
     for (int i = 0; i < feed->count; i++) {
         const aircraft_t *a = &feed->aircraft[i];
         float e, n;
@@ -375,9 +359,17 @@ uint8_t *radar_draw(const feed_t *feed, const radar_status_t *st) {
             on[i] = false;
             continue;
         }
-        shown++;
+        if (selected[0] && !strcmp(a->hex, selected)) sel = i;
+        drawn[drawn_count].x = (int16_t)sx[i];
+        drawn[drawn_count].y = (int16_t)sy[i];
+        drawn[drawn_count].index = (uint8_t)i;
+        drawn_count++;
         const trail_t *t = trail_for(a->hex, 0, false);
         if (t) draw_trail(t, sx[i], sy[i], px_per_nm, band_trail[band(a)]);
+    }
+    if (sel >= 0) {
+        gfx_circle(sx[sel], sy[sel], 16, C_HOUSE);
+        gfx_circle(sx[sel], sy[sel], 17, C_HOUSE);
     }
     for (int i = 0; i < feed->count; i++)
         if (on[i]) draw_arrow(sx[i], sy[i], &feed->aircraft[i], band_colour[band(&feed->aircraft[i])]);
@@ -388,10 +380,29 @@ uint8_t *radar_draw(const feed_t *feed, const radar_status_t *st) {
     gfx_fill_rect(CX - 1, CY - 6, 3, 13, C_HOUSE);
     gfx_fill_rect(CX - 6, CY - 1, 13, 3, C_HOUSE);
 
-    draw_status(st, shown);
+    // the range, the map's credit (OpenStreetMap's licence asks for it) and the zoom buttons,
+    // along the bottom of what's free
+    char text[12];
+    snprintf(text, sizeof text, "%d NM", ranges[range_i].range_nm);
+    int w = gfx_text(&font_large, 12, bottom - 14, text, TEXT_RAMP(T_WHITE));
+    if (have_receiver)
+        gfx_text(&font_small, 12 + w + 12, bottom - 15, "\x7f OpenStreetMap", TEXT_RAMP(T_MAP));
+    btn_out.y = btn_in.y = bottom - 64;
     draw_button(&btn_out, false);
     draw_button(&btn_in, true);
-    return target;
+}
+
+int radar_pick(int x, int y) {
+    const int reach = 28;
+    int best = -1, best_d = reach * reach + 1;
+    for (int i = 0; i < drawn_count; i++) {
+        int dx = drawn[i].x - x, dy = drawn[i].y - y, d = dx * dx + dy * dy;
+        if (d < best_d) {
+            best_d = d;
+            best = drawn[i].index;
+        }
+    }
+    return best;
 }
 
 static bool hit(const rect_t *r, int x, int y) {
@@ -399,13 +410,20 @@ static bool hit(const rect_t *r, int x, int y) {
     return x >= r->x - slop && x < r->x + r->w + slop && y >= r->y - slop && y < r->y + r->h + slop;
 }
 
-bool radar_touch(int x, int y) {
-    if (hit(&btn_in, x, y) && range_i > 0) {
-        range_i--;
+bool radar_button(int x, int y, bool *changed) {
+    *changed = false;
+    if (hit(&btn_in, x, y)) {
+        if (range_i > 0) {
+            range_i--;
+            *changed = true;
+        }
         return true;
     }
-    if (hit(&btn_out, x, y) && range_i < RANGES - 1) {
-        range_i++;
+    if (hit(&btn_out, x, y)) {
+        if (range_i < RANGES - 1) {
+            range_i++;
+            *changed = true;
+        }
         return true;
     }
     return false;

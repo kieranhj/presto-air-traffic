@@ -1,38 +1,45 @@
-// The radar screen: centred on the receiver, north up, range rings, aircraft as arrows with
-// trails and labels, a status line, and zoom buttons.
+// The radar screen: centred on the receiver, north up, a map, range rings, aircraft as arrows with
+// trails and labels, and zoom buttons. ui.c puts it on screen, with the header and details strip.
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "feed.h"
-
-typedef struct {
-    bool wifi_up;
-    const char *wifi_state;     // net_state()
-    int32_t data_age_ms;        // since the last good aircraft.json; -1 before the first
-} radar_status_t;
+#include "palette.h"
 
 // The station's position, from the Pi's receiver.json. Until it's set, aircraft are placed by
-// their range and bearing (r_dst, r_dir) and get no trails.
+// their range and bearing (r_dst, r_dir) and get no trails, and there's no map.
 void radar_set_receiver(double lat, double lon);
 bool radar_has_receiver(void);
 
 // Adds each aircraft's new position to its trail. Call once per new aircraft.json.
 void radar_track(const feed_t *feed, uint32_t now_ms);
 
-// Two more screen-sized buffers (in PSRAM) let it keep the map in a layer that's only redrawn
-// when the range changes, and compose each frame off screen. Without them it draws straight onto
-// `screen`, every time.
-void radar_set_buffers(uint8_t *screen, uint8_t *base_layer, uint8_t *back_buffer);
+// An aircraft's distance (NM) and bearing (degrees true) from the receiver; false if it has no
+// position.
+bool radar_range_bearing(const aircraft_t *a, float *nm, float *deg);
 
-// Draws the radar. Returns where: the back buffer (copy it to the screen at vsync) or the screen.
-uint8_t *radar_draw(const feed_t *feed, const radar_status_t *status);
+// Its altitude band's colour, as a palette entry and as a text colour.
+uint8_t radar_alt_colour(const aircraft_t *a);
+text_colour_t radar_alt_text(const aircraft_t *a);
 
-// A touch going down at (x, y). Returns true if it changed what's drawn.
-bool radar_touch(int x, int y);
+// A screen-sized buffer (in PSRAM) to keep the map and rings in, redrawn only when the range
+// changes. Without one radar_draw draws them every time.
+void radar_set_base_layer(uint8_t *base_layer);
+
+// Draws the radar into `target` (a screen-sized buffer). `selected` is the hex of the aircraft
+// to ring ("" for none); `bottom` is where the free area ends (a details strip below it), and
+// the range label and zoom buttons sit just above it.
+void radar_draw(uint8_t *target, const feed_t *feed, const char *selected, int bottom);
+
+// The feed index of the aircraft drawn nearest (x, y), within reach of a finger; -1 if none.
+int radar_pick(int x, int y);
+
+// A tap at (x, y) on a zoom button? `changed` says whether the range changed.
+bool radar_button(int x, int y, bool *changed);
 
 int radar_range_nm(void);
 
-// The last redraw's map: its time and the line segments it drew.
+// The last time the map was drawn: how long it took and the line segments it drew.
 void radar_map_stats(uint32_t *us, uint32_t *segments);
