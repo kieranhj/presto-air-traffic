@@ -8,6 +8,7 @@
 #include "gfx.h"
 #include "palette.h"
 #include "radar.h"
+#include "routes.h"
 
 enum { SCREEN_LIST, SCREEN_RADAR, SCREEN_STATUS, SCREENS };
 
@@ -56,12 +57,14 @@ static const aircraft_t *find(const feed_t *feed, const char *hex) {
 static void select_aircraft(const aircraft_t *a, uint32_t now_ms) {
     if (!a) {
         selected[0] = 0;
+        routes_want("");
         return;
     }
     strncpy(selected, a->hex, sizeof selected - 1);
     selected[sizeof selected - 1] = 0;
     selected_last = *a;
     selected_seen_ms = now_ms;
+    routes_want(a->flight);
 }
 
 static const char *name_of(const aircraft_t *a) {
@@ -104,7 +107,7 @@ static void tap(int x, int y, const feed_t *feed, uint32_t now_ms) {
         int bottom = selected[0] ? STRIP_Y : GFX_H;
         if (y < bottom && radar_button(x, y, &changed)) return;
         if (selected[0] && y >= STRIP_Y) {
-            if (x >= GFX_W - 60 && y < STRIP_Y + 44) selected[0] = 0;     // the strip's close mark
+            if (x >= GFX_W - 60 && y < STRIP_Y + 44) select_aircraft(NULL, now_ms);     // the strip's close mark
             return;
         }
         int i = radar_pick(x, y);
@@ -164,7 +167,7 @@ void ui_update(const feed_t *feed, uint32_t now_ms) {
         selected_last = *a;
         selected_seen_ms = now_ms;
     } else if (now_ms - selected_seen_ms > FORGET_SELECTED_MS) {
-        selected[0] = 0;
+        select_aircraft(NULL, now_ms);
     }
 }
 
@@ -230,12 +233,27 @@ static void draw_strip(const feed_t *feed, uint32_t now_ms) {
     line[0] = 0;
     if (a->flight[0] && a->reg[0]) snprintf(line, sizeof line, "%s", a->reg);
     if (a->type[0]) snprintf(line + strlen(line), sizeof line - strlen(line), "%s%s", line[0] ? "  " : "", a->type);
-    gfx_text(&font_small, x, y + 30, line, TEXT_RAMP(T_GREY));
+    x += gfx_text(&font_small, x, y + 30, line, TEXT_RAMP(T_GREY));
 
-    // what it is (the Pi's database), or its ICAO address
-    snprintf(line, sizeof line, "%s", a->desc[0] ? a->desc : "");
-    if (!line[0]) snprintf(line, sizeof line, "ICAO %s", a->hex);
-    gfx_text(&font_small, 14, y + 53, line, TEXT_RAMP(T_GREY));
+    // where it's flying from and to (the Worker); without a route, what it is (the Pi's
+    // database), or its ICAO address
+    const route_info_t *route;
+    route_state_t rs = routes_get(a->flight, &route);
+    if (rs == ROUTE_KNOWN) {
+        // the type in words after the registration, if there's room
+        if (a->desc[0] && x + 12 + gfx_text_width(&font_small, a->desc) < GFX_W - 56)
+            gfx_text(&font_small, x + 12, y + 30, a->desc, TEXT_RAMP(T_GREY));
+        snprintf(line, sizeof line, "%s \x80 %s", route->from_code, route->to_code);
+        x = 14 + gfx_text(&font_small, 14, y + 53, line, TEXT_RAMP(T_WHITE)) + 12;
+        snprintf(line, sizeof line, "%s to %s", route->from_name, route->to_name);
+        if (x + gfx_text_width(&font_small, line) < GFX_W - 8) gfx_text(&font_small, x, y + 53, line, TEXT_RAMP(T_GREY));
+    } else {
+        if (rs == ROUTE_PENDING) snprintf(line, sizeof line, "Looking up the route...");
+        else if (rs == ROUTE_UNKNOWN) snprintf(line, sizeof line, "Route not known%s%s", a->desc[0] ? "   " : "", a->desc);
+        else if (a->desc[0]) snprintf(line, sizeof line, "%s", a->desc);
+        else snprintf(line, sizeof line, "ICAO %s", a->hex);
+        gfx_text(&font_small, 14, y + 53, line, TEXT_RAMP(T_GREY));
+    }
 
     // altitude and climb, speed and track
     altitude_text(line, sizeof line, a);
@@ -298,6 +316,9 @@ static void draw_list(const feed_t *feed) {
         text[0] = 0;
         if (a->type[0]) snprintf(text, sizeof text, "%s", a->type);
         if (a->flight[0] && a->reg[0]) snprintf(text + strlen(text), sizeof text - strlen(text), "%s%s", text[0] ? "  " : "", a->reg);
+        const route_info_t *route;
+        if (routes_get(a->flight, &route) == ROUTE_KNOWN)
+            snprintf(text + strlen(text), sizeof text - strlen(text), "%s%s \x80 %s", text[0] ? "   " : "", route->from_code, route->to_code);
         gfx_text(&font_small, 20, y + 43, text, TEXT_RAMP(T_GREY));
 
         float nm, deg;
@@ -355,6 +376,13 @@ static void draw_status_screen(const feed_t *feed, const ui_status_t *st) {
     status_row(&y, "Running for", v, T_WHITE);
     snprintf(v, sizeof v, "built %s", __DATE__);
     status_row(&y, "Firmware", v, T_WHITE);
+    routes_stats_t rs;
+    routes_stats(&rs, st->uptime_s * 1000);
+    if (rs.backoff_s) snprintf(v, sizeof v, "%lu, %lu failed; paused %lu s (HTTP %d)", (unsigned long)rs.lookups,
+                               (unsigned long)rs.failures, (unsigned long)rs.backoff_s, rs.last_http);
+    else snprintf(v, sizeof v, "%lu looked up, %lu failed, %lu kept", (unsigned long)rs.lookups,
+                  (unsigned long)rs.failures, (unsigned long)rs.cached);
+    status_row(&y, "Routes", v, rs.backoff_s ? T_WAIT : T_WHITE);
     status_row(&y, "Map", "\x7f OpenStreetMap contributors (ODbL)", T_GREY);
 }
 

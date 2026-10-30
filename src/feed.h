@@ -47,3 +47,14 @@ bool feed_parse(const char *json, size_t len, feed_t *out);
 
 // Parses receiver.json for the station's position. Returns false if it has none.
 bool feed_parse_receiver(const char *json, size_t len, double *lat, double *lon);
+
+// The Worker's /api/route-lookup answer: `known` if it had a route. The labels are as it gives
+// them, e.g. "Pisa (PSA)" (UTF-8), or empty; the ICAO codes may be empty too.
+typedef struct {
+    bool known;
+    char origin_icao[8], dest_icao[8];
+    char origin_label[48], dest_label[48];
+} feed_route_t;
+
+// Returns false if it isn't that answer's shape.
+bool feed_parse_route(const char *json, size_t len, feed_route_t *route);

@@ -13,6 +13,7 @@
 #include "net.h"
 #include "palette.h"
 #include "radar.h"
+#include "routes.h"
 #include "ui.h"
 #include "drivers/ft6236.h"
 #include "drivers/psram.h"
@@ -83,11 +84,11 @@ int main(void) {
         // one GET at a time: the station's position until we have it, then the aircraft
         if (in_flight == GET_NONE && net_up()) {
             if (!radar_has_receiver() && (int32_t)(now - next_receiver) >= 0) {
-                if (net_get_start(PI_HOST, PI_PORT, "/data/receiver.json", json, sizeof json))
+                if (net_get_start(NET_SLOT_PI, PI_HOST, PI_PORT, false, "/data/receiver.json", json, sizeof json))
                     in_flight = GET_RECEIVER;
                 next_receiver = now + RECEIVER_RETRY_MS;
             } else if ((int32_t)(now - next_fetch) >= 0) {
-                if (net_get_start(PI_HOST, PI_PORT, "/data/aircraft.json", json, sizeof json)) {
+                if (net_get_start(NET_SLOT_PI, PI_HOST, PI_PORT, false, "/data/aircraft.json", json, sizeof json)) {
                     in_flight = GET_AIRCRAFT;
                     fetch_started = now;
                 }
@@ -96,7 +97,7 @@ int main(void) {
         }
         size_t len;
         int http;
-        net_get_status_t g = net_get_poll(&len, &http);
+        net_get_status_t g = net_get_poll(NET_SLOT_PI, &len, &http);
         if (g == NET_GET_DONE || g == NET_GET_FAILED) {
             if (in_flight == GET_RECEIVER) {
                 double lat, lon;
@@ -134,6 +135,9 @@ int main(void) {
             in_flight = GET_NONE;
         }
 
+        // origin and destination airports, from the Worker
+        if (routes_poll(&feed, now)) redraw = true;
+
         if (redraw || (int32_t)(now - next_redraw) >= 0) {
             ui_status_t st = {
                 .wifi_up = net_up(),
@@ -167,17 +171,21 @@ int main(void) {
             uint32_t f = st7701_frames(), map_us, map_segments;
             fps = (f - frames_at_report) * 1000.0f / REPORT_EVERY_MS;
             radar_map_stats(&map_us, &map_segments);
+            routes_stats_t rs;
+            routes_stats(&rs, now);
             int with_pos = 0;
             for (int i = 0; i < feed.count; i++) with_pos += feed.aircraft[i].has_pos;
             printf("fps %.1f | wifi %s %s rssi %d | receiver %s | fetches %lu fails %lu last %lu ms "
                    "%u bytes | aircraft %d (%d with position) | %.0f msg/s | range %d NM | draw %lu us "
-                   "(max %lu; map %lu us, %lu segments; copy %lu us) | PSRAM errors %lu\n",
+                   "(max %lu; map %lu us, %lu segments; copy %lu us) | PSRAM errors %lu | routes %lu "
+                   "looked up, %lu failed, %lu kept\n",
                    fps, net_state(), net_ip(), net_up() ? net_rssi() : 0,
                    radar_has_receiver() ? "yes" : "no", (unsigned long)fetches, (unsigned long)fails,
                    (unsigned long)fetch_ms, (unsigned)last_len, feed.count, with_pos, messages_per_s,
                    radar_range_nm(), (unsigned long)draw_us, (unsigned long)draw_us_max,
                    (unsigned long)map_us, (unsigned long)map_segments, (unsigned long)copy_us,
-                   (unsigned long)psram_errors);
+                   (unsigned long)psram_errors, (unsigned long)rs.lookups, (unsigned long)rs.failures,
+                   (unsigned long)rs.cached);
             frames_at_report = f;
             next_report = now + REPORT_EVERY_MS;
         }

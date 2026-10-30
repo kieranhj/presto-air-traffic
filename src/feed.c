@@ -195,3 +195,46 @@ bool feed_parse_receiver(const char *json, size_t len, double *lat, double *lon)
     }
     return has_lat && has_lon;
 }
+
+bool feed_parse_route(const char *json, size_t len, feed_route_t *r) {
+    cur_t c = {json, json + len};
+    memset(r, 0, sizeof *r);
+    if (!eat(&c, '{')) return false;
+    if (eat(&c, '}')) return false;
+    bool saw_route = false;
+    for (;;) {
+        char key[24];
+        if (!string(&c, key, sizeof key) || !eat(&c, ':')) return false;
+        if (!strcmp(key, "route")) {
+            saw_route = true;
+            ws(&c);
+            if (c.p < c.end && *c.p == '{') {
+                c.p++;
+                r->known = true;
+                if (!eat(&c, '}')) {
+                    for (;;) {
+                        char k[24];
+                        if (!string(&c, k, sizeof k) || !eat(&c, ':')) return false;
+                        bool ok;
+                        if (!peek_string(&c)) ok = skip_value(&c, 2);     // null
+                        else if (!strcmp(k, "originIcao")) ok = string(&c, r->origin_icao, sizeof r->origin_icao);
+                        else if (!strcmp(k, "destinationIcao")) ok = string(&c, r->dest_icao, sizeof r->dest_icao);
+                        else if (!strcmp(k, "originLabel")) ok = string(&c, r->origin_label, sizeof r->origin_label);
+                        else if (!strcmp(k, "destinationLabel")) ok = string(&c, r->dest_label, sizeof r->dest_label);
+                        else ok = skip_value(&c, 2);
+                        if (!ok) return false;
+                        if (eat(&c, '}')) break;
+                        if (!eat(&c, ',')) return false;
+                    }
+                }
+            } else if (!skip_value(&c, 1)) {
+                return false;
+            }
+        } else if (!skip_value(&c, 1)) {
+            return false;
+        }
+        if (eat(&c, '}')) break;
+        if (!eat(&c, ',')) return false;
+    }
+    return saw_route;
+}

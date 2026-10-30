@@ -3,7 +3,11 @@
 #include <stdio.h>
 #include <string.h>
 #include "pico/cyw43_arch.h"
+#include "lwip/altcp_tls.h"
 #include "lwip/apps/http_client.h"
+#include "mbedtls/platform_time.h"
+#include "mbedtls/ssl.h"
+#include "roots.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/netif.h"
 
@@ -78,64 +82,103 @@ int net_rssi(void) {
     return rssi;
 }
 
-// -- GET (lwIP's HTTP client; its callbacks run in lwIP's context)
+// mbedTLS's clock (MBEDTLS_PLATFORM_MS_TIME_ALT): time since boot is all it needs
+mbedtls_ms_time_t mbedtls_ms_time(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
 
-static httpc_connection_t settings;
-static char *get_buf;
-static size_t get_cap;
-static volatile size_t get_len;
-static volatile int get_http_status;
-static volatile net_get_status_t get_status = NET_GET_IDLE;
-static volatile bool get_overflow;
+// -- GETs (lwIP's HTTP client; its callbacks run in lwIP's context), one per slot
+
+typedef struct {
+    httpc_connection_t settings;
+    char *buf;
+    size_t cap;
+    volatile size_t len;
+    volatile int http_status;
+    volatile net_get_status_t status;
+    volatile bool overflow;
+} get_slot_t;
+
+static get_slot_t slots[NET_SLOTS];
+
+// TLS: one client configuration (the trusted roots), and an allocator that also gives each
+// connection the server's name, which Cloudflare needs (SNI) and lwIP's HTTP client doesn't set
+static struct altcp_tls_config *tls_config;
+static char tls_host[64];
+
+static struct altcp_pcb *tls_alloc(void *arg, u8_t ip_type) {
+    (void)arg;
+    struct altcp_pcb *pcb = altcp_tls_alloc(tls_config, ip_type);
+    if (pcb) mbedtls_ssl_set_hostname((mbedtls_ssl_context *)altcp_tls_context(pcb), tls_host);
+    return pcb;
+}
+
+static altcp_allocator_t tls_allocator = {tls_alloc, NULL};
 
 static err_t on_body(void *arg, struct altcp_pcb *conn, struct pbuf *p, err_t err) {
-    (void)arg; (void)err;
+    (void)err;
+    get_slot_t *s = arg;
     if (!p) return ERR_OK;
-    size_t room = get_cap - 1 - get_len;
+    size_t room = s->cap - 1 - s->len;
     size_t n = p->tot_len < room ? p->tot_len : room;
-    if (n < p->tot_len) get_overflow = true;
-    pbuf_copy_partial(p, get_buf + get_len, n, 0);
-    get_len += n;
+    if (n < p->tot_len) s->overflow = true;
+    pbuf_copy_partial(p, s->buf + s->len, n, 0);
+    s->len += n;
     altcp_recved(conn, p->tot_len);
     pbuf_free(p);
     return ERR_OK;
 }
 
 static void on_done(void *arg, httpc_result_t result, u32_t rx_content_len, u32_t srv_res, err_t err) {
-    (void)arg; (void)rx_content_len; (void)err;
-    get_buf[get_len] = 0;
-    get_http_status = srv_res;
-    get_status = result == HTTPC_RESULT_OK && srv_res == 200 && !get_overflow ? NET_GET_DONE : NET_GET_FAILED;
+    (void)rx_content_len; (void)err;
+    get_slot_t *s = arg;
+    s->buf[s->len] = 0;
+    s->http_status = srv_res;
+    s->status = result == HTTPC_RESULT_OK && srv_res == 200 && !s->overflow ? NET_GET_DONE : NET_GET_FAILED;
 }
 
-bool net_get_start(const char *host, uint16_t port, const char *path, char *buf, size_t cap) {
-    if (get_status == NET_GET_BUSY || !net_up() || cap < 2) return false;
-    get_buf = buf;
-    get_cap = cap;
-    get_len = 0;
-    get_http_status = 0;
-    get_overflow = false;
-    get_status = NET_GET_BUSY;
-    settings.use_proxy = 0;
-    settings.result_fn = on_done;
-    settings.headers_done_fn = NULL;
+bool net_get_start(int slot, const char *host, uint16_t port, bool tls, const char *path, char *buf, size_t cap) {
+    get_slot_t *s = &slots[slot];
+    if (s->status == NET_GET_BUSY || !net_up() || cap < 2) return false;
+    if (tls) {
+        // one TLS connection at a time: the allocator's host name is shared
+        for (int i = 0; i < NET_SLOTS; i++)
+            if (i != slot && slots[i].status == NET_GET_BUSY && slots[i].settings.altcp_allocator) return false;
+        if (!tls_config) {
+            cyw43_arch_lwip_begin();
+            tls_config = altcp_tls_create_config_client((const u8_t *)roots_pem, roots_pem_len);
+            cyw43_arch_lwip_end();
+            if (!tls_config) return false;
+        }
+        snprintf(tls_host, sizeof tls_host, "%s", host);
+    }
+    s->buf = buf;
+    s->cap = cap;
+    s->len = 0;
+    s->http_status = 0;
+    s->overflow = false;
+    s->status = NET_GET_BUSY;
+    memset(&s->settings, 0, sizeof s->settings);
+    s->settings.result_fn = on_done;
+    s->settings.altcp_allocator = tls ? &tls_allocator : NULL;
     httpc_state_t *conn;
     cyw43_arch_lwip_begin();
-    err_t e = httpc_get_file_dns(host, port, path, &settings, on_body, NULL, &conn);
+    err_t e = httpc_get_file_dns(host, port, path, &s->settings, on_body, s, &conn);
     cyw43_arch_lwip_end();
     if (e != ERR_OK) {
-        get_status = NET_GET_IDLE;
+        s->status = NET_GET_IDLE;
         return false;
     }
     return true;
 }
 
-net_get_status_t net_get_poll(size_t *len, int *http_status) {
-    net_get_status_t s = get_status;
-    if (s == NET_GET_DONE || s == NET_GET_FAILED) {
-        if (len) *len = get_len;
-        if (http_status) *http_status = get_http_status;
-        get_status = NET_GET_IDLE;
+net_get_status_t net_get_poll(int slot, size_t *len, int *http_status) {
+    get_slot_t *s = &slots[slot];
+    net_get_status_t st = s->status;
+    if (st == NET_GET_DONE || st == NET_GET_FAILED) {
+        if (len) *len = s->len;
+        if (http_status) *http_status = s->http_status;
+        s->status = NET_GET_IDLE;
     }
-    return s;
+    return st;
 }

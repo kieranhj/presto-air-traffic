@@ -23,6 +23,8 @@ add_executable(presto_air_traffic
         ${SRC}/palette.c
         ${SRC}/radar.c
         ${SRC}/ui.c
+        ${SRC}/routes.c
+        ${SRC}/roots.c
         ${SRC}/font_data.c
         ${SRC}/map_data.c
         ${SRC}/drivers/st7701.c
@@ -41,7 +43,8 @@ target_link_libraries(presto_air_traffic PRIVATE
         pico_stdlib pico_multicore
         hardware_pio hardware_dma hardware_spi hardware_pwm hardware_i2c hardware_xip_cache
         pico_cyw43_arch_lwip_threadsafe_background
-        pico_lwip_http)
+        pico_lwip_http
+        pico_lwip_mbedtls pico_mbedtls)
 
 pico_enable_stdio_usb(presto_air_traffic 1)
 pico_enable_stdio_uart(presto_air_traffic 0)
