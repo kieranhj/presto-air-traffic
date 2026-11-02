@@ -290,17 +290,23 @@ static void draw_header(const feed_t *feed, const ui_status_t *st, uint32_t now_
         dot = C_OK;
         col = T_GREY;
     }
-    gfx_disc(16, 17, 5, dot);
-    gfx_text(&font_small, 28, 22, text, TEXT_RAMP(col));
+    // the date and time first, then the status; a status too long to fit beside them before the
+    // page dots has the line to itself
+    char when[24];
+    int x = 10;
+    if (uk_time_text(when, sizeof when, now_ms)) {
+        int after = x + gfx_text_width(&font_small, when) + 18;
+        if (after + 12 + gfx_text_width(&font_small, text) < GFX_W / 2 - 24) {
+            gfx_text(&font_small, x, 22, when, TEXT_RAMP(T_GREY));
+            x = after;
+        }
+    }
+    gfx_disc(x + 6, 17, 5, dot);
+    gfx_text(&font_small, x + 18, 22, text, TEXT_RAMP(col));
 
     int n = with_position(feed);
     snprintf(text, sizeof text, n == 1 ? "1 aircraft" : "%d aircraft", n);
-    int count_x = GFX_W - 10 - gfx_text_width(&font_small, text);
-    gfx_text(&font_small, count_x, 22, text, TEXT_RAMP(T_GREY));
-
-    // the date and time, to the left of the count
-    if (uk_time_text(text, sizeof text, now_ms))
-        gfx_text(&font_small, count_x - 22 - gfx_text_width(&font_small, text), 22, text, TEXT_RAMP(T_GREY));
+    gfx_text(&font_small, GFX_W - 10 - gfx_text_width(&font_small, text), 22, text, TEXT_RAMP(T_GREY));
 
     // which screen: three dots, the current one bright
     for (int i = 0; i < SCREENS; i++) gfx_disc(GFX_W / 2 + (i - 1) * 16, 17, 3, i == current ? C_HOUSE : C_RING);
