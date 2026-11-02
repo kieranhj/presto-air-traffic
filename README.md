@@ -52,7 +52,8 @@ the first load needs `--ignore-partitions`.
 - **Labels:** the callsign (or registration), then the altitude in hundreds of feet ("035" is
   3,500 ft, "GND" on the ground), with a small triangle if it's climbing or descending.
 - **Top line:** a green dot and "Live" while the data's fresh; yellow while Wi-Fi joins; red, with
-  the age, when the Pi hasn't answered for 5 s. The aircraft count is on the right.
+  the age, when the Pi hasn't answered for 5 s. On the right, the date and UK time (the Pi's
+  clock, from its aircraft.json) and the aircraft count.
 - **Tap an aircraft** (on the radar, or a row of the list, which is a swipe right away) for its
   details and route along the bottom. Close them with the ×, a swipe down anywhere on the radar,
   or a tap on empty map. Swipe left for the status screen.

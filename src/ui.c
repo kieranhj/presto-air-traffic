@@ -192,7 +192,16 @@ bool ui_touch(const touch_state_t *t, const feed_t *feed, uint32_t now_ms) {
     return false;
 }
 
+// The clock: the Pi's time (aircraft.json's "now"; it keeps it by NTP) and when we had it, ticking
+// on from there by our own timer between fetches
+static double clock_unix;
+static uint32_t clock_ms;
+
 void ui_update(const feed_t *feed, uint32_t now_ms) {
+    if (feed->now > 0) {
+        clock_unix = feed->now;
+        clock_ms = now_ms;
+    }
     if (!selected[0]) return;
     const aircraft_t *a = find(feed, selected);
     if (a) {
@@ -211,7 +220,56 @@ static int with_position(const feed_t *feed) {
     return n;
 }
 
-static void draw_header(const feed_t *feed, const ui_status_t *st) {
+// Days since 1970-01-01 of a date in the proleptic Gregorian calendar (Howard Hinnant's
+// days_from_civil)
+static long days_from_civil(int y, int m, int d) {
+    y -= m <= 2;
+    long era = (y >= 0 ? y : y - 399) / 400;
+    long yoe = y - era * 400;
+    long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+// ... and back (civil_from_days)
+static void civil_from_days(long days, int *y, int *m, int *d) {
+    long z = days + 719468;
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    long doe = z - era * 146097;
+    long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp = (5 * doy + 2) / 153;
+    *d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    *m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    *y = (int)(yoe + era * 400) + (*m <= 2);
+}
+
+// The Unix time of 01:00 UTC on the last Sunday of a month: when UK clocks change
+static long long clocks_change(int year, int month) {
+    long last = days_from_civil(year, month, 31);
+    long weekday = (last + 4) % 7;              // 1970-01-01 was a Thursday; 0 is Sunday
+    return (long long)(last - weekday) * 86400 + 3600;
+}
+
+// "Mon 2 Nov  14:32", in UK time (BST from the last Sunday in March to the last in October)
+static bool uk_time_text(char *out, size_t cap, uint32_t now_ms) {
+    static const char *const days_of_week[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    if (clock_unix <= 0) return false;
+    long long t = (long long)clock_unix + (now_ms - clock_ms) / 1000;
+    int year, month, day;
+    civil_from_days((long)(t / 86400), &year, &month, &day);
+    if (t >= clocks_change(year, 3) && t < clocks_change(year, 10)) t += 3600;
+
+    long days = (long)(t / 86400), secs = (long)(t % 86400);
+    civil_from_days(days, &year, &month, &day);
+    snprintf(out, cap, "%s %d %s  %02ld:%02ld", days_of_week[(days + 4) % 7], day, months[month - 1],
+             secs / 3600, secs / 60 % 60);
+    return true;
+}
+
+static void draw_header(const feed_t *feed, const ui_status_t *st, uint32_t now_ms) {
     char text[40];
     uint8_t dot;
     text_colour_t col;
@@ -237,7 +295,12 @@ static void draw_header(const feed_t *feed, const ui_status_t *st) {
 
     int n = with_position(feed);
     snprintf(text, sizeof text, n == 1 ? "1 aircraft" : "%d aircraft", n);
-    gfx_text(&font_small, GFX_W - 10 - gfx_text_width(&font_small, text), 22, text, TEXT_RAMP(T_GREY));
+    int count_x = GFX_W - 10 - gfx_text_width(&font_small, text);
+    gfx_text(&font_small, count_x, 22, text, TEXT_RAMP(T_GREY));
+
+    // the date and time, to the left of the count
+    if (uk_time_text(text, sizeof text, now_ms))
+        gfx_text(&font_small, count_x - 22 - gfx_text_width(&font_small, text), 22, text, TEXT_RAMP(T_GREY));
 
     // which screen: three dots, the current one bright
     for (int i = 0; i < SCREENS; i++) gfx_disc(GFX_W / 2 + (i - 1) * 16, 17, 3, i == current ? C_HOUSE : C_RING);
@@ -430,6 +493,6 @@ uint8_t *ui_draw(const feed_t *feed, const ui_status_t *st, uint32_t now_ms) {
         if (current == SCREEN_LIST) draw_list(feed);
         else draw_status_screen(feed, st);
     }
-    draw_header(feed, st);
+    draw_header(feed, st, now_ms);
     return target;
 }
