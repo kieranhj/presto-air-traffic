@@ -4,7 +4,7 @@
 # By default it uses the ones rp2350-bbc-micro's scripts/setup.sh installed (Arm GNU toolchain
 # 14.2, Pico SDK 2.2.0, prebuilt pioasm and picotool on Windows). Set PRESTO_DEPS first to use
 # another folder laid out the same way.
-: "${PRESTO_DEPS:=C:/Dev/rp2350-bbc-micro-deps}"
+: "${PRESTO_DEPS:=D:/pico-esp32/rp2350-bbc-micro-deps}"   # was C:/Dev/rp2350-bbc-micro-deps before the 2026-11 Dev Drive move
 export PRESTO_DEPS
 export PICO_SDK_PATH=$PRESTO_DEPS/pico-sdk
 export PICO_TOOLCHAIN_PATH=$(ls -d "$PRESTO_DEPS"/arm-gnu-toolchain-* | head -1)
